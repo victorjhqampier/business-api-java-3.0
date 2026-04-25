@@ -1,0 +1,8 @@
+Compilar y levantar businessapi
+
+Desde la raiz del repo:
+./Presentation/businessapi/mvnw -f Presentation/businessapi/pom.xml clean package
+java -jar Presentation/businessapi/target/quarkus-app/quarkus-run.jar
+
+Levantar en modo desarrollo:
+./Presentation/businessapi/mvnw -f Presentation/businessapi/pom.xml quarkus:dev
