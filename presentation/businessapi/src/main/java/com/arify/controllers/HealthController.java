@@ -80,6 +80,6 @@ public class HealthController {
     private String resolveVersion() {
         Package appPackage = getClass().getPackage();
         String version = appPackage != null ? appPackage.getImplementationVersion() : null;
-        return (version == null || version.isBlank()) ? "1.0.0-SNAPSHOT" : version;
+        return (version == null || version.isBlank()) ? "1.0.0-SNAPSHOT-arify-labs" : version + "-arify-labs";
     }
 }

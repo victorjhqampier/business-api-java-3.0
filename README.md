@@ -31,6 +31,8 @@ Desde la raiz del proyecto:
 ```bash
 ./presentation/businessapi/mvnw -f pom.xml clean install -DskipITs=true
 ./presentation/businessapi/mvnw -f presentation/businessapi/pom.xml quarkus:dev
+# Optinal qwith reload
+mvn -f pom.xml io.quarkus.platform:quarkus-maven-plugin:3.34.1:dev -pl presentation/businessapi -am
 ```
 
 Build y ejecucion en modo jar:
