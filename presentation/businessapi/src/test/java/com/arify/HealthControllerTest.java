@@ -38,7 +38,24 @@ class HealthControllerTest {
                 .then()
                 .statusCode(200)
                 .body("status", is("UP"))
-                .body("environment", notNullValue())
-                .body("timestamp", notNullValue());
+                .body("checks", notNullValue());
+    }
+
+    @Test
+    void testLivenessEndpoint() {
+        given()
+                .when().get("/health/live")
+                .then()
+                .statusCode(200)
+                .body("status", is("UP"));
+    }
+
+    @Test
+    void testReadinessEndpoint() {
+        given()
+                .when().get("/health/ready")
+                .then()
+                .statusCode(200)
+                .body("status", is("UP"));
     }
 }

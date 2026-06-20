@@ -13,9 +13,9 @@ public final class FluentValidationExecutor {
 
     public static List<ValidationResultAdapter> validate(TraceIdentifierAdapter traceIdentifier) {
         List<ValidationResultAdapter> errors = new ArrayList<>();
-        validateField("deviceIdentifier", traceIdentifier.getDeviceIdentifier(), errors);
-        validateField("messageIdentifier", traceIdentifier.getMessageIdentifier(), errors);
-        validateField("channelIdentifier", traceIdentifier.getChannelIdentifier(), errors);
+        validateField("deviceIdentifier", traceIdentifier.deviceIdentifier(), errors);
+        validateField("messageIdentifier", traceIdentifier.messageIdentifier(), errors);
+        validateField("channelIdentifier", traceIdentifier.channelIdentifier(), errors);
         return List.copyOf(errors);
     }
 

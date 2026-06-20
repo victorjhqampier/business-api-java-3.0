@@ -1,16 +1,16 @@
 FROM maven:3.9.11-eclipse-temurin-21 AS build
 
-WORKDIR /workspace/Presentation/businessapi
+WORKDIR /workspace/presentation/businessapi
 
 # Copy dependency metadata first to improve Docker layer caching.
-COPY Presentation/businessapi/.mvn .mvn
-COPY Presentation/businessapi/mvnw .
-COPY Presentation/businessapi/pom.xml .
+COPY presentation/businessapi/.mvn .mvn
+COPY presentation/businessapi/mvnw .
+COPY presentation/businessapi/pom.xml .
 
 RUN chmod +x mvnw
 RUN ./mvnw -B dependency:go-offline
 
-COPY Presentation/businessapi/src src
+COPY presentation/businessapi/src src
 
 RUN ./mvnw -B package -DskipTests
 
@@ -21,10 +21,10 @@ WORKDIR /deployments
 RUN groupadd --system quarkus \
     && useradd --system --gid quarkus --create-home --home-dir /home/quarkus quarkus
 
-COPY --from=build /workspace/Presentation/businessapi/target/quarkus-app/lib/ ./lib/
-COPY --from=build /workspace/Presentation/businessapi/target/quarkus-app/*.jar ./
-COPY --from=build /workspace/Presentation/businessapi/target/quarkus-app/app/ ./app/
-COPY --from=build /workspace/Presentation/businessapi/target/quarkus-app/quarkus/ ./quarkus/
+COPY --from=build /workspace/presentation/businessapi/target/quarkus-app/lib/ ./lib/
+COPY --from=build /workspace/presentation/businessapi/target/quarkus-app/*.jar ./
+COPY --from=build /workspace/presentation/businessapi/target/quarkus-app/app/ ./app/
+COPY --from=build /workspace/presentation/businessapi/target/quarkus-app/quarkus/ ./quarkus/
 
 EXPOSE 8080
 
