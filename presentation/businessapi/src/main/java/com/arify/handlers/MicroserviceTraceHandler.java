@@ -11,17 +11,17 @@ import java.util.UUID;
 import java.util.logging.Logger;
 
 public class MicroserviceTraceHandler {
-    public static final int MAX_REQUEST_PAYLOAD_LENGTH = 1000;
-    public static final int MAX_RESPONSE_PAYLOAD_LENGTH = 2000;
+    private static final int MAX_REQUEST_PAYLOAD_LENGTH = 1000;
+    private static final int MAX_RESPONSE_PAYLOAD_LENGTH = 2000;
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper().registerModule(new JavaTimeModule());
+    private static final Logger LOGGER = Logger.getLogger(MicroserviceTraceHandler.class.getName());
 
-    public final MicroserviceCallMemoryQueue queue;
-    public final String operationName;
-    public final String keyword;
-    public final String messageIdentifier;
-    public final String channelIdentifier;
-    public final String deviceIdentifier;
-    public final ObjectMapper objectMapper;
-    public final Logger logger;
+    private final MicroserviceCallMemoryQueue queue;
+    private final String operationName;
+    private final String keyword;
+    private final String messageIdentifier;
+    private final String channelIdentifier;
+    private final String deviceIdentifier;
 
     public MicroserviceTraceHandler(
             MicroserviceCallMemoryQueue queue,
@@ -36,8 +36,6 @@ public class MicroserviceTraceHandler {
         this.messageIdentifier = messageIdentifier == null ? "" : messageIdentifier;
         this.channelIdentifier = channelIdentifier == null ? "" : channelIdentifier;
         this.deviceIdentifier = deviceIdentifier == null ? "" : deviceIdentifier;
-        this.objectMapper = new ObjectMapper().registerModule(new JavaTimeModule());
-        this.logger = Logger.getLogger(MicroserviceTraceHandler.class.getName());
     }
 
     public void pushSuccess(String requestUrl, String method, Object requestPayload, Object responsePayload, int statusCode) {
@@ -66,7 +64,7 @@ public class MicroserviceTraceHandler {
                 OffsetDateTime.now());
 
         if (!queue.tryPush(traceEntity)) {
-            logger.warning("Microservice trace queue is full");
+            LOGGER.warning("Microservice trace queue is full");
         }
     }
 
@@ -77,7 +75,7 @@ public class MicroserviceTraceHandler {
 
         String serialized;
         try {
-            serialized = payload instanceof String text ? text : objectMapper.writeValueAsString(payload);
+            serialized = payload instanceof String text ? text : OBJECT_MAPPER.writeValueAsString(payload);
         } catch (JsonProcessingException exception) {
             serialized = payload.toString();
         }

@@ -7,6 +7,7 @@ import com.arify.domain.interfaces.IFakeApiInfrastructure;
 import com.arify.fakeapiinfra.queries.FakeApiCommand;
 import com.arify.httpclientbuilder.HttpClientConnector;
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.inject.Disposes;
 import jakarta.enterprise.inject.Produces;
 import jakarta.inject.Named;
 
@@ -44,6 +45,11 @@ public class AppConfiguration {
     @Named("virtualThreadExecutor")
     public ExecutorService virtualThreadExecutor() {
         return Executors.newVirtualThreadPerTaskExecutor();
+    }
+
+    public void shutdownVirtualThreadExecutor(
+            @Disposes @Named("virtualThreadExecutor") ExecutorService virtualThreadExecutor) {
+        virtualThreadExecutor.shutdown();
     }
 
     @Produces

@@ -5,12 +5,12 @@ import com.arify.application.adapters.ExampleRequestAdapter;
 import com.arify.application.internals.adapters.TraceIdentifierAdapter;
 import com.arify.application.internals.executors.EasyResult;
 import com.arify.application.ports.ExamplePort;
-import com.arify.domain.commons.CancellationReason;
 import com.arify.domain.commons.CancellationToken;
 import com.arify.domain.containers.memoryevents.MicroserviceCallMemoryQueue;
 import com.arify.handlers.MicroserviceTraceHandler;
 import com.arify.helpers.EasyResponseHelper;
 import io.smallrye.common.annotation.RunOnVirtualThread;
+import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.POST;
@@ -23,22 +23,20 @@ import jakarta.ws.rs.core.UriInfo;
 import org.eclipse.microprofile.openapi.annotations.parameters.Parameter;
 import org.jboss.resteasy.reactive.RestHeader;
 import org.jboss.resteasy.reactive.RestPath;
-
 import java.time.Duration;
-import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletionException;
-import java.util.concurrent.TimeoutException;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
 @Path("/business-api-b/v1/no-bian")
 @Consumes(MediaType.APPLICATION_JSON)
 @Produces(MediaType.APPLICATION_JSON)
+@ApplicationScoped
 public class NoBianExampleController {
-    public static final String OPERATION_NAME = "obtener-cliente";
+    private static final String OPERATION_NAME = "obtener-cliente";
     // Equivalente a CancellationTokenSource con timeout de 9s en C# .NET.
-    public static final Duration HTTP_TIMEOUT = Duration.ofSeconds(9);
-    public final Logger logger = Logger.getLogger(NoBianExampleController.class.getName());
+    private static final Duration HTTP_TIMEOUT = Duration.ofSeconds(9);
+    private static final Logger LOGGER = Logger.getLogger(NoBianExampleController.class.getName());
 
     @Inject
     ExamplePort exampleUseCase;
@@ -97,24 +95,24 @@ public class NoBianExampleController {
             traceHandler.pushSuccess(uriInfo.getRequestUri().toString(), "POST", body, result, result.status());
 
             if (!result.isSuccess()) {
-                logger.warning("Validation failed");
+                LOGGER.fine("Validation failed");
                 return EasyResponseHelper.warningResponse(result.validationValues(), result.status());
             }
 
             if (result.status() == 204) {
-                logger.warning("No content found");
+                LOGGER.fine("No content found");
                 return EasyResponseHelper.noContent(204);
             }
 
             return EasyResponseHelper.successResponse(result.successValue());
 
         } catch (CompletionException completionException) {
-                logger.severe(String.format("Operation cancelled by timeout (%ds)", HTTP_TIMEOUT.getSeconds()));
+                LOGGER.severe(String.format("Operation cancelled by timeout (%ds)", HTTP_TIMEOUT.getSeconds()));
                 traceHandler.pushError(uriInfo.getRequestUri().toString(), "POST", body, 408, "Request Timeout");
                 return EasyResponseHelper.noContent(408);
 
         } catch (Exception exception) {
-                logger.log(Level.SEVERE, exception.getMessage(), exception);
+                LOGGER.log(Level.SEVERE, exception.getMessage(), exception);
                 traceHandler.pushError(uriInfo.getRequestUri().toString(),"POST", body, 500, exception.getMessage());
                 return EasyResponseHelper.errorResponse("500",  "Internal Server Error");
         }

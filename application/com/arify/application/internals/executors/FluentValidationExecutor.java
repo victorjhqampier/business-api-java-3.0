@@ -20,6 +20,7 @@ import java.util.function.Supplier;
  * Equivalente al comportamiento interno de FluentValidation en C# .NET.
  */
 public final class FluentValidationExecutor {
+    private static final TraceIdentifierAdapterValidator TRACE_IDENTIFIER_VALIDATOR = new TraceIdentifierAdapterValidator();
 
     private FluentValidationExecutor() {
         // Utility class - no se permite instanciación
@@ -41,7 +42,14 @@ public final class FluentValidationExecutor {
      */
     public static <T> List<ValidationResultAdapter> execute(T inputObj, Supplier<AbstractValidator<T>> validatorSupplier) {
         try {
-            AbstractValidator<T> validator = validatorSupplier.get();
+            return execute(inputObj, validatorSupplier.get());
+        } catch (Exception exception) {
+            return validationExecutorError(exception);
+        }
+    }
+
+    public static <T> List<ValidationResultAdapter> execute(T inputObj, AbstractValidator<T> validator) {
+        try {
             List<ArifyValidationRuleResponse> errors = validator.validate(inputObj);
 
             List<ValidationResultAdapter> result = new ArrayList<>();
@@ -55,11 +63,15 @@ public final class FluentValidationExecutor {
 
             return List.copyOf(result);
         } catch (Exception exception) {
-            return List.of(new ValidationResultAdapter(
-                    "VALIDATION_EXECUTOR_ERROR",
-                    "Error during validation: " + exception.getMessage(),
-                    null));
+            return validationExecutorError(exception);
         }
+    }
+
+    private static List<ValidationResultAdapter> validationExecutorError(Exception exception) {
+        return List.of(new ValidationResultAdapter(
+                "VALIDATION_EXECUTOR_ERROR",
+                "Error during validation: " + exception.getMessage(),
+                null));
     }
 
     /**
@@ -70,7 +82,7 @@ public final class FluentValidationExecutor {
      * @return Lista de errores de validación
      */
     public static List<ValidationResultAdapter> validate(TraceIdentifierAdapter traceIdentifier) {
-        return execute(traceIdentifier, TraceIdentifierAdapterValidator::new);
+        return execute(traceIdentifier, TRACE_IDENTIFIER_VALIDATOR);
     }
 
     /**

@@ -5,6 +5,7 @@ import com.arify.models.internals.FieldErrorInternalModel;
 import com.arify.models.internals.NoBianResponseModel;
 import jakarta.ws.rs.core.Response;
 
+import java.util.ArrayList;
 import java.util.List;
 
 public final class EasyResponseHelper {
@@ -15,10 +16,12 @@ public final class EasyResponseHelper {
         return Response.ok(new NoBianResponseModel<>(dataResponse, null)).build();
     }
 
+    // Optimizado: loop tradicional en lugar de stream para minimizar asignaciones en hot path.
     public static Response warningResponse(List<ValidationResultAdapter> errorList, int statusCode) {
-        List<FieldErrorInternalModel> errors = errorList.stream()
-                .map(error -> new FieldErrorInternalModel(error.code(), error.message(), error.field()))
-                .toList();
+        List<FieldErrorInternalModel> errors = new ArrayList<>(errorList.size());
+        for (ValidationResultAdapter error : errorList) {
+            errors.add(new FieldErrorInternalModel(error.code(), error.message(), error.field()));
+        }
 
         return Response.status(statusCode)
                 .entity(new NoBianResponseModel<>(null, errors))

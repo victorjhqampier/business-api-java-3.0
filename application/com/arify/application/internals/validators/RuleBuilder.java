@@ -41,7 +41,7 @@ public class RuleBuilder<T, P> {
                         return true;
                     }
                     if (value instanceof String str) {
-                        return !str.trim().isEmpty();
+                        return !str.isBlank();
                     }
                     if (value instanceof Collection<?> collection) {
                         return !collection.isEmpty();
@@ -111,7 +111,15 @@ public class RuleBuilder<T, P> {
                         return true;
                     }
                     if (value instanceof String str) {
-                        return !str.isEmpty() && str.chars().allMatch(Character::isDigit);
+                        if (str.isEmpty()) {
+                            return false;
+                        }
+                        for (int index = 0; index < str.length(); index++) {
+                            if (!Character.isDigit(str.charAt(index))) {
+                                return false;
+                            }
+                        }
+                        return true;
                     }
                     return true;
                 },

@@ -24,6 +24,63 @@ Regla central: `application` orquesta casos de uso y llama a **interfaces defini
 | `presentation/eventlistener` | idem flat | `application` si necesita orquestacion; evitar depender directo de infra |
 | `presentation/businessapi` | `src/main/java/` estandar | `application`, Quarkus BOM; composition root puede incluir infra para wiring CDI |
 
+## Enfoque de rendimiento
+
+Estas APIs deben estar orientadas a cargas **data-intensive** en primer lugar y **processing-intensive** en segundo lugar. La prioridad es mover, validar, transformar y responder datos con baja latencia y bajo desperdicio de memoria; el trabajo CPU pesado se atiende despues y debe aislarse para no degradar el camino I/O.
+
+### Mandatos de Alto Rendimiento (OBLIGATORIOS)
+
+**1. Objetos Estáticos (Singletons)**
+- `Logger`: SIEMPRE `private static final Logger LOGGER = Logger.getLogger(...)`. Instanciarlo por request es un error de arquitectura.
+- `ObjectMapper` (Jackson): SIEMPRE `private static final ObjectMapper`. Registrar módulos (`JavaTimeModule`) una sola vez al inicializar.
+- Validadores (`AbstractValidator<T>`): SIEMPRE `private static final` o `@ApplicationScoped`. Nunca reconstruir reglas ni metadata por request.
+- HTTP Clients (`HttpClient`, `HttpClientConnector`): SIEMPRE `@ApplicationScoped` (Singleton CDI). No crear instancias nuevas por petición.
+- ExecutorService: SIEMPRE `@ApplicationScoped` con lifecycle management (`@Disposes` para shutdown limpio).
+
+**2. Protocolo de Hilos Virtuales (Java 21)**
+- **Presentation Layer**: Usar `@RunOnVirtualThread` en endpoints REST. Permite usar `.join()` de forma idiomática sin bloquear platform threads.
+- **Application Layer**: Recibir `ExecutorService` por constructor (inyectado desde Composition Root). Usar `CompletableFuture.*Async(..., executor)` para continuaciones. **PROHIBIDO** importar anotaciones Quarkus/Jakarta en esta capa.
+- **Composition Root** (`AppConfiguration`): Usar `Executors.newVirtualThreadPerTaskExecutor()` para crear el pool de hilos virtuales. Es la forma nativa de Java 21 para I/O-bound.
+- **Benefit**: Con el mismo hardware, pasar de cientos de conexiones simultáneas a decenas de miles. Los hilos virtuales son minúsculos (KB vs MB).
+
+**3. Hot Path (Rutas Calientes)**
+- **Loops vs Streams**: En métodos que transforman listas de errores de validación o payloads grandes, preferir loops tradicionales (`for`, `ArrayList.add()`) sobre `stream().map().toList()`. Esto minimiza la basura en el GC.
+- **Ejemplo Correcto**:
+  ```java
+  List<FieldErrorInternalModel> errors = new ArrayList<>(errorList.size());
+  for (ValidationResultAdapter error : errorList) {
+      errors.add(new FieldErrorInternalModel(error.code(), error.message(), error.field()));
+  }
+  ```
+- **Ejemplo Incorrecto** (en hot path):
+  ```java
+  List<FieldErrorInternalModel> errors = errorList.stream()
+      .map(error -> new FieldErrorInternalModel(...))
+      .toList(); // Crea intermediarios innecesarios
+  ```
+
+**4. Scopes CDI**
+- Controllers: `@ApplicationScoped` (Singleton). Solo si el controller NO tiene estado mutable entre requests.
+- Use Cases: Inyectar como `@ApplicationScoped`. Los casos de uso no deben tener estado que varíe entre peticiones.
+- Handlers/Helpers que NO tienen dependencias inyectables: Clase con constructor privado y métodos `static`.
+
+### Reglas de Medición
+
+- Medir antes de concluir. Una medicion de Postman incluye cliente, red local, dispatch HTTP, Jackson, logs, trazas, warmup y respuesta; no equivale a validacion pura.
+- Medir endpoints en modo jar o produccion, despues de warmup. La primera request puede incluir lazy init/JIT y no representa latencia estable.
+- Para micro-costos usar mediciones dentro de JVM o JMH cuando aplique; para endpoints usar `curl`, `wrk`, `hey`, `ab` u otra herramienta repetible.
+- Optimizar primero el camino data-intensive: serializacion/deserializacion, HTTP clients, ObjectMapper, validadores, trazas, colas, buffers, logs y asignaciones por request.
+- Los flujos esperados como 4xx/empty/no-content no deben escribir logs `warning`/`severe` por request; usar `fine/debug` o metricas.
+- Para I/O-bound usar virtual threads en presentation/background services cuando aplique; para CPU-bound usar ejecutores acotados y no mezclar trabajo CPU pesado con el loop de request.
+- Mantener backpressure: colas con capacidad, timeouts, cancelacion y limites de payload son parte del diseno data-intensive.
+
+### Hallazgo Base de Rendimiento (Verificado)
+
+- El endpoint `POST /business-api-b/v1/no-bian/{customer_id}/create` fue medido en jar local con payload invalido 422. La primera request fria rondo ~97 ms por warmup/lazy init; requests calientes quedaron alrededor de 2.35-2.70 ms, con un outlier de 4.89 ms.
+- La validacion pura de campos es **sub-milisegundo**; una lectura de 32-53 ms en Postman normalmente apunta a medicion de request completa, dev mode, warmup, logging, trazas o asignaciones innecesarias.
+- Se corrigio el camino caliente para reutilizar validadores, evitar reconstruir reglas/reflection por request, reutilizar `ObjectMapper` de trazas y bajar logs esperados de validacion a nivel fino.
+- **Resultado**: Con hilos virtuales + singletons + hot path optimizado, el sistema puede manejar 10-100x más tráfico concurrente con el mismo hardware que un diseño tradicional con platform threads.
+
 ## Quirk: package vs file path
 
 `infrastructure/*`, `presentation/eventlistener`, `domain/` y `application/` usan `sourceDirectory=${project.basedir}`. Archivos bajo `infrastructure/fake-api-infra/com/arify/fakeapiinfra/` declaran `package com.arify.application` o `com.arify.domain.entities`. **No corregir.** No mover archivos ni cambiar packages sin decision explicita.
@@ -70,7 +127,17 @@ mvn package -Pnative -DskipTests
 - Puertos de entrada: interfaces en `application/ports/`. Casos de uso las implementan y `presentation` las consume.
 - Interfaces de dominio: contratos en `domain/interfaces/` que `application` consume e `infrastructure` implementa. No llamarlas ports.
 - Validacion: `FluentValidationExecutor`.
-- Virtual threads: Quarkus se usa solo en presentation; usar `@RunOnVirtualThread` en endpoints o `Thread.ofVirtual()` en background services cuando aplique.
+- **Validadores**: SIEMPRE reutilizar instancias `private static final` en casos de uso o `@ApplicationScoped` cuando sea necesario. Ejemplo:
+  ```java
+  private static final TraceIdentifierAdapterValidator TRACE_IDENTIFIER_VALIDATOR = new TraceIdentifierAdapterValidator();
+  // Uso:
+  List<ValidationResultAdapter> errors = FluentValidationExecutor.execute(trace, TRACE_IDENTIFIER_VALIDATOR);
+  ```
+- **Virtual threads**: 
+  - En `presentation`: usar `@RunOnVirtualThread` en endpoints REST.
+  - En `application`: usar solo Java nativo (`ExecutorService` inyectado, `CompletableFuture.*Async(..., executor)`).
+  - **PROHIBIDO**: importar anotaciones Quarkus/Jakarta en `application` o `domain`.
+- **Loggers**: SIEMPRE `private static final Logger LOGGER = Logger.getLogger(...)` para minimizar overhead.
 - Java 21 validado por `maven-enforcer-plugin`.
 - CORS: solo `arify.com`, metodos GET,POST,PUT,DELETE.
 - Dockerfile usa `presentation/businessapi` (lowercase), compatible con filesystems case-sensitive.

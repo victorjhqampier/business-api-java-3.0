@@ -2,7 +2,7 @@ package com.arify.application.usecases.exampleusecase;
 
 import com.arify.application.adapters.CreateExampleAdapter;
 import com.arify.application.adapters.ExampleRequestAdapter;
-import com.arify.application.adapters.ExampleRequestAdapterValidator;
+import com.arify.application.adapters.validations.ExampleRequestAdapterValidator;
 import com.arify.application.internals.adapters.TraceIdentifierAdapter;
 import com.arify.application.internals.adapters.TraceIdentifierAdapterValidator;
 import com.arify.application.internals.adapters.ValidationResultAdapter;
@@ -26,18 +26,20 @@ import java.util.concurrent.TimeUnit;
 public class ExampleUseCase implements ExamplePort {
     public static final int VALIDATION_FAILED_STATUS = 422;
     public static final int EXAMPLE_AGE = 5;
+    private static final TraceIdentifierAdapterValidator TRACE_IDENTIFIER_VALIDATOR = new TraceIdentifierAdapterValidator();
+    private static final ExampleRequestAdapterValidator EXAMPLE_REQUEST_VALIDATOR = new ExampleRequestAdapterValidator();
 
     // Equivalente a una dependencia inyectada por constructor en C# .NET.
     // Ejemplo C#: private readonly IFakeApiInfrastructure _fakeApi;
     public final IFakeApiInfrastructure fakeApi;
 
-    // Equivalente al ThreadPool / TaskScheduler controlado en C# .NET.
-    // En Java 21, usamos un ExecutorService de Virtual Threads para operaciones I/O-bound.
-    public final ExecutorService executor;
+    // Executor Java puro para continuaciones del caso de uso.
+    // El composition root decide si lo implementa con virtual threads u otra estrategia.
+    public final ExecutorService myThreadExec;
 
     public ExampleUseCase(IFakeApiInfrastructure fakeApi, ExecutorService executor) {
         this.fakeApi = fakeApi;
-        this.executor = executor;
+        this.myThreadExec = executor;
     }
 
     @Override
@@ -48,7 +50,7 @@ public class ExampleUseCase implements ExamplePort {
         
         // Equivalente a FluentValidation en C# .NET.
         // Primero validamos headers antes de ejecutar lógica de negocio.
-        List<ValidationResultAdapter> traceValidationErrors = FluentValidationExecutor.execute(headers, TraceIdentifierAdapterValidator::new);
+        List<ValidationResultAdapter> traceValidationErrors = FluentValidationExecutor.execute(headers, TRACE_IDENTIFIER_VALIDATOR);
         if (!traceValidationErrors.isEmpty()) {
             return CompletableFuture.completedFuture(
                     EasyResult.failure(VALIDATION_FAILED_STATUS, traceValidationErrors)
@@ -58,15 +60,14 @@ public class ExampleUseCase implements ExamplePort {
         // Validamos el body del request
         List<ValidationResultAdapter> requestValidationErrors = FluentValidationExecutor.execute(
                 exampleRequest, 
-                ExampleRequestAdapterValidator::new);
+                EXAMPLE_REQUEST_VALIDATOR);
         if (!requestValidationErrors.isEmpty()) {
             return CompletableFuture.completedFuture(
                     EasyResult.failure(VALIDATION_FAILED_STATUS, requestValidationErrors)
             );
         }
 
-        // Equivalente a Task.Run(...) en C# .NET usando un scheduler/executor controlado.
-        // Usamos el ExecutorService de Virtual Threads para ejecutar operaciones I/O-bound.
+        // Las interfaces de dominio ya retornan CompletableFuture; no envolvemos llamadas no bloqueantes en supplyAsync.
         CompletableFuture<Optional<FakeApiEntity>> result1Task = fakeApi.getUserAsync(randomId(), token);
         CompletableFuture<Optional<FakeApiEntity>> result2Task = fakeApi.getTitleAsync(randomId(), token);
 
@@ -76,7 +77,7 @@ public class ExampleUseCase implements ExamplePort {
         // hacia el controlador sin ser capturada aquí, manteniendo la capa de aplicación pura.
         return CompletableFuture.allOf(result1Task, result2Task)
                 .orTimeout(token.remainingTimeout().toMillis(), TimeUnit.MILLISECONDS)
-                .thenApply(ignored -> {
+                .thenApplyAsync(ignored -> {
                     // Equivalente a leer Result después de que Task.WhenAll ya terminó.
                     // join() aquí no bloquea porque allOf ya completó exitosamente.
                     Optional<FakeApiEntity> result1 = result1Task.join();
@@ -94,7 +95,7 @@ public class ExampleUseCase implements ExamplePort {
                     );
 
                     return EasyResult.success(result);
-                });
+                }, myThreadExec);
     }
 
     private int randomId() {
