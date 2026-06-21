@@ -7,8 +7,5 @@ import com.arify.application.internals.executors.EasyResult;
 import com.arify.domain.commons.CancellationToken;
 
 public interface ExamplePort {
-    EasyResult<CreateExampleAdapter> getDataAsync(
-            CancellationToken cancellationToken,
-            TraceIdentifierAdapter trace,
-            ExampleRequestAdapter exampleRequest);
+    CompletableFuture<EasyResult<CreateExampleAdapter>> getDataAsync(TraceIdentifierAdapter trace, ExampleRequestAdapter exampleRequest, CancellationToken token);
 }

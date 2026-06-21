@@ -63,16 +63,38 @@ public class NoBianExampleController {
             
             @Context UriInfo uriInfo
     ) {
-        CancellationToken cancellationToken = CancellationToken.withDefault();
-        TraceIdentifierAdapter trace = new TraceIdentifierAdapter(deviceIdentifier, messageIdentifier, channelIdentifier);
+        TraceIdentifierAdapter trace = new TraceIdentifierAdapter(
+            deviceIdentifier,
+            messageIdentifier,
+            channelIdentifier
+        );
         MicroserviceTraceHandler traceHandler = new MicroserviceTraceHandler(
-                memoryQueue, OPERATION_NAME, customerId, messageIdentifier, channelIdentifier, deviceIdentifier);
-        String requestUrl = uriInfo.getRequestUri().toString();
+            memoryQueue,
+            OPERATION_NAME,
+            customerId,
+            messageIdentifier,
+            channelIdentifier,
+            deviceIdentifier
+        );
+
+        // Equivale a CancellationTokenSource en C# .NET.
+        // Se crea en presentación porque aquí nace el request HTTP.
+        CancellationToken cancellationToken = new CancellationToken(Duration.ofSeconds(3));
 
         try {
-            EasyResult<CreateExampleAdapter> result = exampleUseCase.getDataAsync(cancellationToken, trace, body);
-            traceHandler.pushSuccess(requestUrl, "POST", body, result, result.status());
-            Thread.sleep(5000);
+            // Como este endpoint usa @RunOnVirtualThread, hacer join() aquí es aceptable,
+            // porque no bloquea un platform thread tradicional.
+            EasyResult<CreateExampleAdapter> result = exampleUseCase.getDataAsync(trace, body, cancellationToken).join();
+
+            // Equivale a registrar auditoría/traza después de la ejecución del caso de uso.
+            traceHandler.pushSuccess(
+                    uriInfo.getRequestUri().toString(),
+                    "POST",
+                    body,
+                    result,
+                    result.status()
+            );
+
             if (result.status() == 204) {
                 return Response.status(204).build();
             }
@@ -81,16 +103,66 @@ public class NoBianExampleController {
                 return Response.status(408).build();
             }
 
+            if (result.status() == 499) {
+                return Response.status(499).build();
+            }
+
             if (!result.isSuccess()) {
                 logger.warning("Validation failed");
-                return EasyResponseHelper.warningResponse(result.validationValues(), result.status());
+                return EasyResponseHelper.warningResponse(
+                        result.validationValues(),
+                        result.status()
+                );
             }
 
             return EasyResponseHelper.successResponse(result.successValue());
+
+        } catch (CancellationException exception) {
+
+            // Equivale a capturar OperationCanceledException en C# .NET.
+            cancellationToken.cancel(CancellationReason.CLIENT_CLOSED);
+            traceHandler.pushError(
+                    uriInfo.getRequestUri().toString(),
+                    "POST",
+                    body,
+                    CLIENT_CLOSED_STATUS,
+                    "Request cancelado por el cliente"
+            );
+
+            return Response.status(CLIENT_CLOSED_STATUS).build();
+
+        } catch (CompletionException exception) {
+            logger.log(Level.SEVERE, exception.getMessage(), exception);
+            traceHandler.pushError(
+                    uriInfo.getRequestUri().toString(),
+                    "POST",
+                    body,
+                    500,
+                    exception.getMessage()
+            );
+
+            return EasyResponseHelper.errorResponse(
+                    "99",
+                    "No es de tu lado, es nuestro error",
+                    500
+            );
+
         } catch (Exception exception) {
             logger.log(Level.SEVERE, exception.getMessage(), exception);
-            traceHandler.pushError(requestUrl, "POST", body, 500, exception.getMessage());
-            return EasyResponseHelper.errorResponse("99", "No es de tu lado, es nuestro error", 500);
-        }
+            traceHandler.pushError(
+                    uriInfo.getRequestUri().toString(),
+                    "POST",
+                    body,
+                    500,
+                    exception.getMessage()
+            );
+
+            return EasyResponseHelper.errorResponse(
+                    "99",
+                    "No es de tu lado, es nuestro error",
+                    500
+            );
+
     }
+
 }
