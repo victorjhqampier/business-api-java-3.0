@@ -17,6 +17,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CancellationException;
+import java.util.concurrent.CompletableFuture;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
@@ -119,27 +120,27 @@ public class HttpClientBuilder {
         return this;
     }
 
-    public HttpResponseEntity get() {
+    public CompletableFuture<HttpResponseEntity> get() {
         return send("GET", null);
     }
 
-    public HttpResponseEntity get(CancellationToken cancellationToken) {
+    public CompletableFuture<HttpResponseEntity> get(CancellationToken cancellationToken) {
         return send("GET", null, cancellationToken);
     }
 
-    public HttpResponseEntity post(Map<String, Object> body) {
+    public CompletableFuture<HttpResponseEntity> post(Map<String, Object> body) {
         return send("POST", body);
     }
 
-    public HttpResponseEntity post(Map<String, Object> body, CancellationToken cancellationToken) {
+    public CompletableFuture<HttpResponseEntity> post(Map<String, Object> body, CancellationToken cancellationToken) {
         return send("POST", body, cancellationToken);
     }
 
-    public HttpResponseEntity put(Map<String, Object> body) {
+    public CompletableFuture<HttpResponseEntity> put(Map<String, Object> body) {
         return send("PUT", body);
     }
 
-    public HttpResponseEntity put(Map<String, Object> body, CancellationToken cancellationToken) {
+    public CompletableFuture<HttpResponseEntity> put(Map<String, Object> body, CancellationToken cancellationToken) {
         return send("PUT", body, cancellationToken);
     }
 
@@ -169,53 +170,50 @@ public class HttpClientBuilder {
         }
     }
 
-    public HttpResponseEntity send(String method, Map<String, Object> body) {
+    public CompletableFuture<HttpResponseEntity> send(String method, Map<String, Object> body) {
         return send(method, body, null);
     }
 
-    public HttpResponseEntity send(String method, Map<String, Object> body, CancellationToken cancellationToken) {
+    // Retorna CompletableFuture sin bloquear, permitiendo composición asíncrona.
+    // Equivalente a retornar Task<HttpResponseMessage> en C#.
+    public CompletableFuture<HttpResponseEntity> send(String method, Map<String, Object> body, CancellationToken cancellationToken) {
         ensureDefaultHeaders();
         String finalUrl = buildFinalUrl();
 
-        try {
-            if (cancellationToken != null && cancellationToken.isCancellationRequested()) {
-                throw new CancellationException("HTTP request cancelled before dispatch.");
-            }
-
-            HttpResponseEntity response = apiClient.requestAsync(
-                    method,
-                    finalUrl,
-                    body,
-                    query.isEmpty() ? null : query,
-                    headers.isEmpty() ? null : headers,
-                    timeout,
-                    cancellationToken);
-
-            captureCompleteTrace(method, body, response);
-            return response;
-
-        } catch (CancellationException exception) {
-            int statusCode = cancellationStatusCode(cancellationToken);
-            logger.log(Level.WARNING, InfrastructureLogger.format(
-                    "WARNING",
-                    exception.getMessage(),
-                    null,
-                    "{\"operation\":\"HttpClientBuilder.send\",\"method\":\"" + method + "\",\"url\":\"" + finalUrl + "\"}",
-                    "\"" + exception + "\""));
-
-            captureErrorTrace(method, body, exception.getMessage(), statusCode);
-            throw exception;
-        } catch (Exception exception) {
-            logger.log(Level.SEVERE, InfrastructureLogger.format(
-                    "SEVERE",
-                    exception.getMessage(),
-                    null,
-                    "{\"operation\":\"HttpClientBuilder.send\",\"method\":\"" + method + "\",\"url\":\"" + finalUrl + "\"}",
-                    "\"" + exception + "\""));
-
-            captureErrorTrace(method, body, exception.getMessage(), cancellationStatusCode(cancellationToken));
-            throw exception;
+        if (cancellationToken != null && cancellationToken.isCancellationRequested()) {
+            return CompletableFuture.failedFuture(new CancellationException("HTTP request cancelled before dispatch."));
         }
+
+        return apiClient.requestAsync(
+                        method,
+                        finalUrl,
+                        body,
+                        query.isEmpty() ? null : query,
+                        headers.isEmpty() ? null : headers,
+                        timeout,
+                        cancellationToken)
+                .whenComplete((response, throwable) -> {
+                    if (throwable != null) {
+                        // Capturar traza de error
+                        Throwable cause = throwable instanceof java.util.concurrent.CompletionException
+                                ? throwable.getCause()
+                                : throwable;
+
+                        int statusCode = cancellationStatusCode(cancellationToken);
+                        
+                        logger.log(Level.WARNING, InfrastructureLogger.format(
+                                "WARNING",
+                                cause.getMessage(),
+                                null,
+                                "{\"operation\":\"HttpClientBuilder.send\",\"method\":\"" + method + "\",\"url\":\"" + finalUrl + "\"}",
+                                "\"" + cause + "\""));
+
+                        captureErrorTrace(method, body, cause.getMessage(), statusCode);
+                    } else {
+                        // Capturar traza exitosa
+                        captureCompleteTrace(method, body, response);
+                    }
+                });
     }
 
     public void resetMemoryState() {

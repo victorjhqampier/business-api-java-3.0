@@ -14,9 +14,13 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 import java.util.function.Function;
 import java.util.logging.Logger;
 
+// Implementa la interfaz de dominio IFakeApiInfrastructure.
+// Retorna CompletableFuture<Optional<T>> para permitir composición asíncrona,
+// equivalente a Task<T> en C# .NET.
 public class FakeApiCommand implements IFakeApiInfrastructure {
     public final MicroserviceCallMemoryQueue queue;
     public final HttpClientConnector httpConnector;
@@ -31,9 +35,10 @@ public class FakeApiCommand implements IFakeApiInfrastructure {
     }
 
     @Override
-    public Optional<FakeApiEntity> getUserAsync(int id, CancellationToken cancellationToken) {
+    public CompletableFuture<Optional<FakeApiEntity>> getUserAsync(int id, CancellationToken cancellationToken) {
+        // Validación temprana de cancelación, similar a ThrowIfCancellationRequested en C#
         if (cancellationToken.isCancellationRequested()) {
-            return Optional.empty();
+            return CompletableFuture.completedFuture(Optional.empty());
         }
 
         HttpClientBuilder httpClient = new HttpClientBuilder(httpConnector, logger);
@@ -42,19 +47,20 @@ public class FakeApiCommand implements IFakeApiInfrastructure {
                 .timeout(FakeApiStarting.TIMEOUT)
                 .withMemoryQueue(queue, FakeApiStarting.GET_USER_OPERATION, FakeApiStarting.USER_KEYWORD);
 
-        HttpResponseEntity result = httpClient.get(cancellationToken);
-
-        return handleResponse(result, FakeApiStarting.GET_USER_OPERATION, content -> new FakeApiEntity(
-                intValue(content, "userId", 0),
-                intValue(content, "id", 0),
-                textValue(content, "title", "No Title"),
-                booleanValue(content, "completed", false)));
+        // Retorna CompletableFuture sin bloquear, permitiendo composición asíncrona.
+        // Equivalente a retornar Task<Optional<T>> en C#.
+        return httpClient.get(cancellationToken)
+                .thenApply(result -> handleResponse(result, FakeApiStarting.GET_USER_OPERATION, content -> new FakeApiEntity(
+                        intValue(content, "userId", 0),
+                        intValue(content, "id", 0),
+                        textValue(content, "title", "No Title"),
+                        booleanValue(content, "completed", false))));
     }
 
     @Override
-    public Optional<FakeApiEntity> getTitleAsync(int id, CancellationToken cancellationToken) {
+    public CompletableFuture<Optional<FakeApiEntity>> getTitleAsync(int id, CancellationToken cancellationToken) {
         if (cancellationToken.isCancellationRequested()) {
-            return Optional.empty();
+            return CompletableFuture.completedFuture(Optional.empty());
         }
 
         HttpClientBuilder httpClient = new HttpClientBuilder(httpConnector, logger);
@@ -67,13 +73,12 @@ public class FakeApiCommand implements IFakeApiInfrastructure {
                 .timeout(FakeApiStarting.TIMEOUT)
                 .withMemoryQueue(queue, FakeApiStarting.GET_TITLE_OPERATION, FakeApiStarting.TITLE_KEYWORD);
 
-        HttpResponseEntity result = httpClient.get(cancellationToken);
-
-        return handleResponse(result, FakeApiStarting.GET_TITLE_OPERATION, content -> new FakeApiEntity(
-                0,
-                intValue(content, "code", 0),
-                textValue(content, "locale", "No Title"),
-                true));
+        return httpClient.get(cancellationToken)
+                .thenApply(result -> handleResponse(result, FakeApiStarting.GET_TITLE_OPERATION, content -> new FakeApiEntity(
+                        0,
+                        intValue(content, "code", 0),
+                        textValue(content, "locale", "No Title"),
+                        true)));
     }
 
     public Optional<FakeApiEntity> handleResponse(

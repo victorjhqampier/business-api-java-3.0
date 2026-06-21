@@ -49,23 +49,27 @@ public class HttpClientConnector {
         // El pool de conexiones se gestiona internamente
     }
 
-    public HttpResponseEntity getAsync(String url, Map<String, String> params, Map<String, String> headers, Duration timeout) {
+    public CompletableFuture<HttpResponseEntity> getAsync(String url, Map<String, String> params, Map<String, String> headers, Duration timeout) {
         return requestAsync("GET", url, null, params, headers, timeout);
     }
 
-    public HttpResponseEntity postAsync(String url, Object data, Map<String, String> params, Map<String, String> headers, Duration timeout) {
+    public CompletableFuture<HttpResponseEntity> postAsync(String url, Object data, Map<String, String> params, Map<String, String> headers, Duration timeout) {
         return requestAsync("POST", url, data, params, headers, timeout);
     }
 
-    public HttpResponseEntity putAsync(String url, Object data, Map<String, String> params, Map<String, String> headers, Duration timeout) {
+    public CompletableFuture<HttpResponseEntity> putAsync(String url, Object data, Map<String, String> params, Map<String, String> headers, Duration timeout) {
         return requestAsync("PUT", url, data, params, headers, timeout);
     }
 
-    public HttpResponseEntity requestAsync(String method, String url, Object json, Map<String, String> params, Map<String, String> headers, Duration timeout) {
+    public CompletableFuture<HttpResponseEntity> requestAsync(String method, String url, Object json, Map<String, String> params, Map<String, String> headers, Duration timeout) {
         return requestAsync(method, url, json, params, headers, timeout, null);
     }
 
-    public HttpResponseEntity requestAsync(
+    // Equivalente a HttpClient.SendAsync en C# .NET.
+    // Retorna CompletableFuture para permitir composición asíncrona sin bloquear platform threads.
+    // El CancellationToken se vincula al Future para abortar la conexión si se cancela,
+    // similar a pasar un CancellationToken a SendAsync en .NET.
+    public CompletableFuture<HttpResponseEntity> requestAsync(
             String method,
             String url,
             Object json,
@@ -73,20 +77,23 @@ public class HttpClientConnector {
             Map<String, String> headers,
             Duration timeout,
             CancellationToken cancellationToken) {
-        try {
-            if (cancellationToken != null && cancellationToken.isCancellationRequested()) {
-                throw cancellationException(cancellationToken);
-            }
+        
+        // Validación temprana de cancelación antes de iniciar el request
+        if (cancellationToken != null && cancellationToken.isCancellationRequested()) {
+            return CompletableFuture.failedFuture(cancellationException(cancellationToken));
+        }
 
+        try {
             String finalUrl = buildUrlWithParams(url, params);
             String jsonBody = serializeJson(json);
             Duration requestTimeout = resolveRequestTimeout(timeout, cancellationToken);
 
+            // Si el timeout ya expiró, fallar inmediatamente
             if (requestTimeout.isZero()) {
                 if (cancellationToken != null) {
                     cancellationToken.cancel(CancellationReason.TIMEOUT);
                 }
-                throw cancellationException(cancellationToken);
+                return CompletableFuture.failedFuture(cancellationException(cancellationToken));
             }
 
             HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
@@ -107,54 +114,63 @@ public class HttpClientConnector {
 
             HttpRequest request = requestBuilder.build();
             CompletableFuture<HttpResponse<String>> responseFuture = client.sendAsync(request, HttpResponse.BodyHandlers.ofString());
+            
+            // Vincular el CancellationToken al Future para abortar el request HTTP si se cancela.
+            // Esto es equivalente a pasar el CancellationToken a HttpClient.SendAsync en C#.
             if (cancellationToken != null) {
                 cancellationToken.onCancel(() -> responseFuture.cancel(true));
             }
 
-            HttpResponse<String> response = responseFuture.join();
+            // Retornamos el Future sin bloquear, permitiendo composición asíncrona.
+            // Equivalente a retornar Task<HttpResponseMessage> en C# sin hacer .Result
+            return responseFuture
+                    .thenApply(response -> {
+                        HttpResponseEntity result = buildResponse(response);
 
-            HttpResponseEntity result = buildResponse(response);
+                        if (result.statusCode() >= 400) {
+                            logger.warning(String.format(
+                                    "HTTP request returned non-success status. Method=[%s] Url=[%s] StatusCode=[%d]",
+                                    method, result.url(), result.statusCode()));
+                        }
 
-            if (result.statusCode() >= 400) {
-                logger.warning(String.format(
-                        "HTTP request returned non-success status. Method=[%s] Url=[%s] StatusCode=[%d]",
-                        method, result.url(), result.statusCode()));
-            }
+                        return result;
+                    })
+                    .exceptionally(throwable -> {
+                        Throwable cause = throwable instanceof CompletionException 
+                                ? throwable.getCause() 
+                                : throwable;
 
-            return result;
+                        // Si el token ya fue cancelado, lanzar CancellationException
+                        if (cancellationToken != null && cancellationToken.isCancellationRequested()) {
+                            throw new CompletionException(cancellationException(cancellationToken));
+                        }
 
-        } catch (CancellationException exception) {
-            logger.warning(String.format("HTTP request cancelled. Method=[%s] Url=[%s]", method, url));
-            throw exception;
+                        // Si es una CancellationException del Future, propagarla
+                        if (cause instanceof CancellationException) {
+                            throw new CompletionException(cancellationException(cancellationToken));
+                        }
 
-        } catch (CompletionException exception) {
-            Throwable cause = exception.getCause() == null ? exception : exception.getCause();
-            if (cancellationToken != null && cancellationToken.isCancellationRequested()) {
-                throw cancellationException(cancellationToken);
-            }
+                        // Si es un HttpTimeoutException, marcar el token como timeout y lanzar
+                        if (cause instanceof HttpTimeoutException) {
+                            if (cancellationToken != null) {
+                                cancellationToken.cancel(CancellationReason.TIMEOUT);
+                            }
+                            logger.warning(String.format("HTTP request timed out. Method=[%s] Url=[%s]", method, url));
+                            throw new CompletionException(new java.util.concurrent.TimeoutException("HTTP request timed out"));
+                        }
 
-            if (cause instanceof CancellationException) {
-                throw cancellationException(cancellationToken);
-            }
-
-            if (cause instanceof HttpTimeoutException) {
-                if (cancellationToken != null) {
-                    cancellationToken.cancel(CancellationReason.TIMEOUT);
-                }
-                logger.warning(String.format("HTTP request timed out. Method=[%s] Url=[%s]", method, url));
-                throw new RuntimeException("HTTP request timed out", cause);
-            }
-
-            logger.log(Level.WARNING, String.format(
-                    "HTTP request failed. Method=[%s] Url=[%s] Error=[%s]",
-                    method, url, cause.getMessage()), cause);
-            throw new RuntimeException("HTTP request failed", cause);
+                        // Para cualquier otra excepción, logear y propagar
+                        logger.log(Level.WARNING, String.format(
+                                "HTTP request failed. Method=[%s] Url=[%s] Error=[%s]",
+                                method, url, cause.getMessage()), cause);
+                        throw new CompletionException(new RuntimeException("HTTP request failed", cause));
+                    });
 
         } catch (Exception exception) {
             logger.log(Level.WARNING, String.format(
-                    "HTTP request failed. Method=[%s] Url=[%s] Error=[%s]",
+                    "HTTP request failed during setup. Method=[%s] Url=[%s] Error=[%s]",
                     method, url, exception.getMessage()), exception);
-            throw new RuntimeException("HTTP request failed", exception);
+            return CompletableFuture.failedFuture(new RuntimeException("HTTP request failed during setup", exception));
         }
     }
 
