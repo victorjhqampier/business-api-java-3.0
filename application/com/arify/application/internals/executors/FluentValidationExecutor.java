@@ -1,36 +1,57 @@
 package com.arify.application.internals.executors;
 
 import com.arify.application.internals.adapters.TraceIdentifierAdapter;
+import com.arify.application.internals.adapters.TraceIdentifierAdapterValidator;
 import com.arify.application.internals.adapters.ValidationResultAdapter;
+import com.arify.application.internals.validators.ArifyValidationRuleResponse;
+import com.arify.application.internals.validators.ArifyValidator;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Function;
 
 public final class FluentValidationExecutor {
 
     private FluentValidationExecutor() {
     }
 
-    public static List<ValidationResultAdapter> validate(TraceIdentifierAdapter traceIdentifier) {
-        List<ValidationResultAdapter> errors = new ArrayList<>();
-        validateField("deviceIdentifier", traceIdentifier.deviceIdentifier(), errors);
-        validateField("messageIdentifier", traceIdentifier.messageIdentifier(), errors);
-        validateField("channelIdentifier", traceIdentifier.channelIdentifier(), errors);
-        return List.copyOf(errors);
+    public static <T> List<ValidationResultAdapter> execute(T inputObj, Function<T, ArifyValidator> validatorFactory) {
+        try {
+            ArifyValidator validator = validatorFactory.apply(inputObj);
+            List<ArifyValidationRuleResponse> errors = validator.validate();
+
+            List<ValidationResultAdapter> result = new ArrayList<>();
+            for (ArifyValidationRuleResponse error : errors) {
+                String code = sanitize(error.errorCode(), "VALIDATION_ERROR");
+                String message = sanitize(error.message(), "Invalid value");
+                String field = sanitize(error.fieldName(), null);
+
+                result.add(new ValidationResultAdapter(code, message, field));
+            }
+
+            return List.copyOf(result);
+        } catch (Exception exception) {
+            return List.of(new ValidationResultAdapter(
+                    "VALIDATION_EXECUTOR_ERROR",
+                    "Error during validation: " + exception.getMessage(),
+                    null));
+        }
     }
 
-    private static void validateField(String fieldName, String value, List<ValidationResultAdapter> errors) {
-        if (value == null || value.isBlank()) {
-            errors.add(new ValidationResultAdapter("21002", "Field is required", fieldName));
-            return;
+    public static List<ValidationResultAdapter> validate(TraceIdentifierAdapter traceIdentifier) {
+        return execute(traceIdentifier, TraceIdentifierAdapterValidator::new);
+    }
+
+    public static String sanitize(String value, String fallback) {
+        if (value == null) {
+            return fallback;
         }
 
-        if (value.length() < 5) {
-            errors.add(new ValidationResultAdapter("21004", "Field must have at least 5 characters", fieldName));
+        String trimmed = value.trim();
+        if (trimmed.isEmpty()) {
+            return fallback;
         }
 
-        if (value.length() > 42) {
-            errors.add(new ValidationResultAdapter("21005", "Field must have at most 42 characters", fieldName));
-        }
+        return trimmed;
     }
 }

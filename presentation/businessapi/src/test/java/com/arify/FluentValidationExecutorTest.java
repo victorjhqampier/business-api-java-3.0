@@ -27,8 +27,10 @@ class FluentValidationExecutorTest {
 
         List<ValidationResultAdapter> errors = FluentValidationExecutor.validate(traceIdentifier);
 
-        assertEquals(3, errors.size());
-        assertTrue(errors.stream().allMatch(error -> "21002".equals(error.code())));
+        assertEquals(5, errors.size());
+        assertTrue(errors.stream().anyMatch(error -> "21002".equals(error.code())));
+        assertTrue(errors.stream().anyMatch(error -> "21001".equals(error.code())));
+        assertTrue(errors.stream().anyMatch(error -> "21004".equals(error.code())));
     }
 
     @Test

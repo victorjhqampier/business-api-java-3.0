@@ -5,22 +5,28 @@ Java 21 + Quarkus 3.34.1 multi-module Maven project (`com.arify`).
 ## Arquitectura
 
 ```
-presentation/businessapi → application → domain
-infrastructure/* → domain (por convencion, sin dependency declarada en pom.xml)
+domain → nada
+application → domain
+infrastructure/* → domain (y otros infra cuando aplique)
+presentation/businessapi → application
 ```
 
-5 modulos: `domain`, `application`, `infrastructure/fake-api-infra`, `infrastructure/http-client-builder`, `presentation/businessapi`.
+Regla central: `application` orquesta casos de uso y llama a **interfaces definidas en domain** que implementa `infrastructure`. `application/ports` contiene solo puertos de entrada que usa `presentation` para invocar casos de uso. En `domain` no se llaman ports; se llaman interfaces.
+
+6 modulos: `domain`, `application`, `infrastructure/fake-api-infra`, `infrastructure/http-client-builder`, `presentation/eventlistener`, `presentation/businessapi`.
 
 | Modulo | Layout | Dependencias Maven |
 |--------|--------|-------------------|
 | `domain` | `sourceDirectory=${project.basedir}` (flat, sin `src/main/java/`) | ninguna |
 | `application` | idem flat | `domain` |
-| `infrastructure/*` | idem flat | **ninguna** (usa packages de `domain`/`application` por convencion) |
-| `presentation/businessapi` | `src/main/java/` estandar | `application`, Quarkus BOM |
+| `infrastructure/fake-api-infra` | idem flat | `domain`, otros infra necesarios |
+| `infrastructure/http-client-builder` | idem flat | `domain`, `jackson-databind` |
+| `presentation/eventlistener` | idem flat | `application` si necesita orquestacion; evitar depender directo de infra |
+| `presentation/businessapi` | `src/main/java/` estandar | `application`, Quarkus BOM; composition root puede incluir infra para wiring CDI |
 
 ## Quirk: package vs file path
 
-`infrastructure/*` y `domain/`/`application/` usan `sourceDirectory=${project.basedir}`. Archivos bajo `infrastructure/fake-api-infra/com/arify/fakeapiinfra/` declaran `package com.arify.application` o `com.arify.domain.entities`. **No corregir.** No mover archivos ni cambiar packages sin decision explicita.
+`infrastructure/*`, `presentation/eventlistener`, `domain/` y `application/` usan `sourceDirectory=${project.basedir}`. Archivos bajo `infrastructure/fake-api-infra/com/arify/fakeapiinfra/` declaran `package com.arify.application` o `com.arify.domain.entities`. **No corregir.** No mover archivos ni cambiar packages sin decision explicita.
 
 ## Comandos
 
@@ -61,7 +67,8 @@ mvn package -Pnative -DskipTests
 
 - DTOs, entidades de dominio y adapters: **Java records**.
 - Casos de uso retornan `EasyResult<T>` (success/failure/empty). Flujos esperados usan `EasyResult`, no excepciones.
-- Puertos: interfaces en `application/ports/`. Casos de uso las implementan o son standalone.
+- Puertos de entrada: interfaces en `application/ports/`. Casos de uso las implementan y `presentation` las consume.
+- Interfaces de dominio: contratos en `domain/interfaces/` que `application` consume e `infrastructure` implementa. No llamarlas ports.
 - Validacion: `FluentValidationExecutor`.
 - Virtual threads: Quarkus se usa solo en presentation; usar `@RunOnVirtualThread` en endpoints o `Thread.ofVirtual()` en background services cuando aplique.
 - Java 21 validado por `maven-enforcer-plugin`.
@@ -83,8 +90,8 @@ mvn package -Pnative -DskipTests
 ## Capas locales
 
 Si editas bajo `domain/` o `application/`, lee su `AGENTS.md` local — contienen reglas estrictas:
-- **domain**: entidades puras, sin anotaciones ni dependencias de framework.
-- **application**: casos de uso, no conoce HTTP/infrastructure/presentation, prohibido llamar servicios externos directamente.
+- **domain**: entidades e interfaces puras, sin anotaciones ni dependencias de framework.
+- **application**: casos de uso, orquesta interfaces de `domain`, no conoce HTTP/infrastructure/presentation, prohibido llamar servicios externos directamente.
 
 ## No modificar sin instruccion explicita
 

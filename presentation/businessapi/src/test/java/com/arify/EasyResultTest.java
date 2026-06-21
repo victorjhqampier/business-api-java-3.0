@@ -19,32 +19,32 @@ class EasyResultTest {
         EasyResult<String> result = EasyResult.success("ok");
 
         assertTrue(result.isSuccess());
-        assertEquals("ok", result.getValue());
-        assertNull(result.getErrorCode());
-        assertTrue(result.getValidationErrors().isEmpty());
+        assertEquals(200, result.status());
+        assertEquals("ok", result.successValue());
+        assertTrue(result.validationValues().isEmpty());
     }
 
     @Test
-    void failureContainsErrorCodeAndValidationErrors() {
+    void failureContainsStatusAndValidationErrors() {
         List<ValidationResultAdapter> errors = List.of(
                 new ValidationResultAdapter("21002", "Field is required", "deviceIdentifier"));
 
-        EasyResult<String> result = EasyResult.failure("VALIDATION_FAILED", errors);
+        EasyResult<String> result = EasyResult.failure(422, errors);
 
         assertFalse(result.isSuccess());
-        assertNull(result.getValue());
-        assertEquals("VALIDATION_FAILED", result.getErrorCode());
-        assertEquals(errors, result.getValidationErrors());
+        assertEquals(422, result.status());
+        assertNull(result.successValue());
+        assertEquals(errors, result.validationValues());
     }
 
     @Test
     void validationErrorsAreImmutable() {
         EasyResult<String> result = EasyResult.failure(
-                "VALIDATION_FAILED",
+                422,
                 List.of(new ValidationResultAdapter("21002", "Field is required", "channelIdentifier")));
 
         assertThrows(UnsupportedOperationException.class,
-                () -> result.getValidationErrors().add(new ValidationResultAdapter("X", "Y", "Z")));
+                () -> result.validationValues().add(new ValidationResultAdapter("X", "Y", "Z")));
     }
 
     @Test
@@ -52,8 +52,8 @@ class EasyResultTest {
         EasyResult<String> result = EasyResult.empty();
 
         assertTrue(result.isSuccess());
-        assertNull(result.getValue());
-        assertNull(result.getErrorCode());
-        assertTrue(result.getValidationErrors().isEmpty());
+        assertEquals(204, result.status());
+        assertNull(result.successValue());
+        assertTrue(result.validationValues().isEmpty());
     }
 }

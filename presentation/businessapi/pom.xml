@@ -45,6 +45,21 @@
             <version>${project.version}</version>
         </dependency>
         <dependency>
+            <groupId>com.arify</groupId>
+            <artifactId>eventlistener</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.arify</groupId>
+            <artifactId>http-client-builder</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.arify</groupId>
+            <artifactId>fake-api-infra</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-rest-jackson</artifactId>
         </dependency>

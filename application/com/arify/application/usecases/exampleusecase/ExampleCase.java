@@ -11,12 +11,12 @@ import java.util.List;
 
 public class ExampleCase {
 
-    private static final String VALIDATION_FAILED = "VALIDATION_FAILED";
+    private static final int VALIDATION_FAILED_STATUS = 422;
 
     public EasyResult<RetrieveExampleAdapter> showExample(TraceIdentifierAdapter traceIdentifier) {
         List<ValidationResultAdapter> errors = FluentValidationExecutor.validate(traceIdentifier);
         if (!errors.isEmpty()) {
-            return EasyResult.failure(VALIDATION_FAILED, errors);
+            return EasyResult.failure(VALIDATION_FAILED_STATUS, errors);
         }
 
         RetrieveExampleAdapter result = new RetrieveExampleAdapter("ping", "pong");
@@ -26,7 +26,7 @@ public class ExampleCase {
     public EasyResult<ExecuteExampleTwoAdapter> executeExampleTwo(TraceIdentifierAdapter traceIdentifier) {
         List<ValidationResultAdapter> errors = FluentValidationExecutor.validate(traceIdentifier);
         if (!errors.isEmpty()) {
-            return EasyResult.failure(VALIDATION_FAILED, errors);
+            return EasyResult.failure(VALIDATION_FAILED_STATUS, errors);
         }
 
         ExecuteExampleTwoAdapter result = new ExecuteExampleTwoAdapter("pong", "ping");
