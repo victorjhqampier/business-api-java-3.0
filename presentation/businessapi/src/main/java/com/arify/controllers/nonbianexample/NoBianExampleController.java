@@ -37,11 +37,7 @@ import java.util.logging.Logger;
 public class NoBianExampleController {
     public static final String OPERATION_NAME = "obtener-cliente";
     // Equivalente a CancellationTokenSource con timeout de 9s en C# .NET.
-    // Este timeout se alinea con el estándar del proyecto C#.
     public static final Duration HTTP_TIMEOUT = Duration.ofSeconds(9);
-    public static final int CLIENT_CLOSED_STATUS = 499;
-    public static final int REQUEST_TIMEOUT_STATUS = 408;
-
     public final Logger logger = Logger.getLogger(NoBianExampleController.class.getName());
 
     @Inject
@@ -50,7 +46,6 @@ public class NoBianExampleController {
     @Inject
     MicroserviceCallMemoryQueue memoryQueue;
 
-    // Equivalente a un endpoint [HttpPost] en C# .NET con [FromHeader] y [FromBody].
     // @RunOnVirtualThread permite que el .join() sea no bloqueante para platform threads,
     // similar al comportamiento de async/await en C#.
     @POST
@@ -77,7 +72,6 @@ public class NoBianExampleController {
 
             @Context UriInfo uriInfo
     ) {
-        // Equivalente a construir TraceIdentifierAdapter desde headers en C# .NET.
         TraceIdentifierAdapter trace = new TraceIdentifierAdapter(
                 deviceIdentifier,
                 messageIdentifier,
@@ -93,170 +87,36 @@ public class NoBianExampleController {
                 deviceIdentifier
         );
 
-        // Equivalente a CancellationTokenSource en C# .NET con timeout de 9s.
-        // Se crea en presentación porque aquí nace el request HTTP.
+        // Equivalente a CancellationTokenSource en C# .NET con timeout de 9s. Se crea en presentación porque aquí nace el request HTTP.
         CancellationToken cancellationToken = CancellationToken.withTimeout(HTTP_TIMEOUT);
 
-        // Equivalente al bloque try en C# ExampleController.Retrieve.
-        // Manejo centralizado de excepciones de ciclo de vida del request.
         try {
             // Como este endpoint usa @RunOnVirtualThread, hacer join() aquí es aceptable,
-            // porque no bloquea un platform thread tradicional.
             // Equivalente a: var result = await _exampleUsecase.ShowExampleAsync(headers, linkedCts.Token);
-            EasyResult<CreateExampleAdapter> result = exampleUseCase
-                    .getDataAsync(trace, body, cancellationToken)
-                    .join();
+            EasyResult<CreateExampleAdapter> result = exampleUseCase.getDataAsync(trace, body, cancellationToken).join();
+            traceHandler.pushSuccess(uriInfo.getRequestUri().toString(), "POST", body, result, result.status());
 
-            // Equivalente a registrar auditoría/traza después de la ejecución del caso de uso.
-            traceHandler.pushSuccess(
-                    uriInfo.getRequestUri().toString(),
-                    "POST",
-                    body,
-                    result,
-                    result.status()
-            );
-
-            // Equivalente a la lógica de manejo de EasyResult en C# .NET.
-            // Orden: validación (422) -> no content (204) -> éxito (200)
-
-            // Si hay errores de validación, retornar 422 con los errores.
-            // Equivalente a: if (!result.IsSuccess) return StatusCode(result.Status, WarningResponse(...))
             if (!result.isSuccess()) {
                 logger.warning("Validation failed");
-                return EasyResponseHelper.warningResponse(
-                        result.validationValues(),
-                        result.status()
-                );
+                return EasyResponseHelper.warningResponse(result.validationValues(), result.status());
             }
 
-            // Si el status es 204, retornar NoContent.
-            // Equivalente a: if (result.Status == 204) return NoContent();
             if (result.status() == 204) {
                 logger.warning("No content found");
-                return Response.status(204).build();
+                return EasyResponseHelper.noContent(204);
             }
 
-            // Si llegamos aquí, es éxito.
-            // Equivalente a: return Ok(SuccessResponse(result.SuccessValue!));
             return EasyResponseHelper.successResponse(result.successValue());
 
         } catch (CompletionException completionException) {
-            // Desempaquetar la causa real de la excepción
-            Throwable cause = completionException.getCause() != null
-                    ? completionException.getCause()
-                    : completionException;
-
-            // Equivalente a: catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested)
-            // Captura TimeoutException que viene de .orTimeout() en el Use Case.
-            if (cause instanceof TimeoutException) {
-                cancellationToken.cancel(CancellationReason.TIMEOUT);
-                logger.warning(String.format("Operation cancelled by timeout (%ds)", HTTP_TIMEOUT.getSeconds()));
-
-                traceHandler.pushError(
-                        uriInfo.getRequestUri().toString(),
-                        "POST",
-                        body,
-                        REQUEST_TIMEOUT_STATUS,
-                        "Request Timeout"
-                );
-
-                return Response.status(REQUEST_TIMEOUT_STATUS).build();
-            }
-
-            // Equivalente a: catch (OperationCanceledException) when (ct.IsCancellationRequested)
-            // Captura CancellationException por cancelación del cliente.
-            if (cause instanceof CancellationException) {
-                // Verificar si fue timeout o cancelación del cliente usando el CancellationToken
-                if (cancellationToken.cancellationReason().orElse(null) == CancellationReason.TIMEOUT) {
-                    logger.warning(String.format("Operation cancelled by timeout (%ds)", HTTP_TIMEOUT.getSeconds()));
-
-                    traceHandler.pushError(
-                            uriInfo.getRequestUri().toString(),
-                            "POST",
-                            body,
-                            REQUEST_TIMEOUT_STATUS,
-                            "Request Timeout"
-                    );
-
-                    return Response.status(REQUEST_TIMEOUT_STATUS).build();
-                } else {
-                    logger.warning("Operation cancelled by client");
-
-                    traceHandler.pushError(
-                            uriInfo.getRequestUri().toString(),
-                            "POST",
-                            body,
-                            CLIENT_CLOSED_STATUS,
-                            "Client Closed Request"
-                    );
-
-                    return Response.status(CLIENT_CLOSED_STATUS).build();
-                }
-            }
-
-            // Para cualquier otra excepción dentro del CompletionException, tratarla como error 500
-            // Equivalente a: catch (Exception ex) en C# .NET
-            logger.log(Level.SEVERE, cause.getMessage(), cause);
-            traceHandler.pushError(
-                    uriInfo.getRequestUri().toString(),
-                    "POST",
-                    body,
-                    500,
-                    cause.getMessage()
-            );
-
-            return EasyResponseHelper.errorResponse(
-                    "500",
-                    "Internal Server Error",
-                    500
-            );
-
-        } catch (CancellationException cancellationException) {
-            // Captura directa de CancellationException (sin CompletionException wrapper)
-            // Equivalente a: catch (OperationCanceledException) en C# .NET
-            if (cancellationToken.cancellationReason().orElse(null) == CancellationReason.TIMEOUT) {
-                logger.warning(String.format("Operation cancelled by timeout (%ds)", HTTP_TIMEOUT.getSeconds()));
-
-                traceHandler.pushError(
-                        uriInfo.getRequestUri().toString(),
-                        "POST",
-                        body,
-                        REQUEST_TIMEOUT_STATUS,
-                        "Request Timeout"
-                );
-
-                return Response.status(REQUEST_TIMEOUT_STATUS).build();
-            } else {
-                logger.warning("Operation cancelled by client");
-
-                traceHandler.pushError(
-                        uriInfo.getRequestUri().toString(),
-                        "POST",
-                        body,
-                        CLIENT_CLOSED_STATUS,
-                        "Client Closed Request"
-                );
-
-                return Response.status(CLIENT_CLOSED_STATUS).build();
-            }
+                logger.severe(String.format("Operation cancelled by timeout (%ds)", HTTP_TIMEOUT.getSeconds()));
+                traceHandler.pushError(uriInfo.getRequestUri().toString(), "POST", body, 408, "Request Timeout");
+                return EasyResponseHelper.noContent(408);
 
         } catch (Exception exception) {
-            // Captura genérica para cualquier otra excepción no manejada.
-            // Equivalente a: catch (Exception ex) en C# .NET
-            logger.log(Level.SEVERE, exception.getMessage(), exception);
-            traceHandler.pushError(
-                    uriInfo.getRequestUri().toString(),
-                    "POST",
-                    body,
-                    500,
-                    exception.getMessage()
-            );
-
-            return EasyResponseHelper.errorResponse(
-                    "500",
-                    "Internal Server Error",
-                    500
-            );
+                logger.log(Level.SEVERE, exception.getMessage(), exception);
+                traceHandler.pushError(uriInfo.getRequestUri().toString(),"POST", body, 500, exception.getMessage());
+                return EasyResponseHelper.errorResponse("500",  "Internal Server Error");
         }
     }
 }

@@ -25,9 +25,13 @@ public final class EasyResponseHelper {
                 .build();
     }
 
-    public static Response errorResponse(String errorCode, String message, int statusCode) {
-        return Response.status(statusCode)
+    public static Response errorResponse(String errorCode, String message) {
+        return Response.status(500)
                 .entity(new NoBianResponseModel<>(null, List.of(new FieldErrorInternalModel(errorCode, message, null))))
                 .build();
+    }
+
+    public static Response noContent(int statusCode) {
+        return Response.status(statusCode).build();
     }
 }

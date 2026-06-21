@@ -1,5 +1,8 @@
 package com.arify.application.adapters;
 
+import com.arify.application.internals.validators.AbstractValidator;
+import com.arify.domain.entities.InternalApiMessage;
+
 public record ExampleRequestAdapter(
         String channelIdentification,
         String messageIdentification,

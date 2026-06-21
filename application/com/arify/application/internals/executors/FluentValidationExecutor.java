@@ -3,22 +3,46 @@ package com.arify.application.internals.executors;
 import com.arify.application.internals.adapters.TraceIdentifierAdapter;
 import com.arify.application.internals.adapters.TraceIdentifierAdapterValidator;
 import com.arify.application.internals.adapters.ValidationResultAdapter;
+import com.arify.application.internals.validators.AbstractValidator;
 import com.arify.application.internals.validators.ArifyValidationRuleResponse;
-import com.arify.application.internals.validators.ArifyValidator;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.function.Function;
+import java.util.function.Supplier;
 
+/**
+ * Ejecutor de validaciones basado en el patrón Fluent Validation de C# .NET.
+ * 
+ * Coordina la ejecución de validadores que heredan de AbstractValidator<T>.
+ * Convierte los errores de validación internos (ArifyValidationRuleResponse)
+ * a DTOs de aplicación (ValidationResultAdapter).
+ * 
+ * Equivalente al comportamiento interno de FluentValidation en C# .NET.
+ */
 public final class FluentValidationExecutor {
 
     private FluentValidationExecutor() {
+        // Utility class - no se permite instanciación
     }
 
-    public static <T> List<ValidationResultAdapter> execute(T inputObj, Function<T, ArifyValidator> validatorFactory) {
+    /**
+     * Ejecuta un validador contra una instancia y retorna los errores encontrados.
+     * 
+     * La diferencia con la versión anterior es que ahora el validador se instancia
+     * una sola vez (no recibe el objeto en el constructor) y puede reutilizarse
+     * para validar múltiples instancias.
+     * 
+     * Equivalente a validator.Validate(instance) en C# FluentValidation.
+     * 
+     * @param <T> Tipo del objeto a validar
+     * @param inputObj Instancia del objeto a validar
+     * @param validatorSupplier Función que crea una instancia del validador (ej. MyValidator::new)
+     * @return Lista inmutable de errores de validación (vacía si no hay errores)
+     */
+    public static <T> List<ValidationResultAdapter> execute(T inputObj, Supplier<AbstractValidator<T>> validatorSupplier) {
         try {
-            ArifyValidator validator = validatorFactory.apply(inputObj);
-            List<ArifyValidationRuleResponse> errors = validator.validate();
+            AbstractValidator<T> validator = validatorSupplier.get();
+            List<ArifyValidationRuleResponse> errors = validator.validate(inputObj);
 
             List<ValidationResultAdapter> result = new ArrayList<>();
             for (ArifyValidationRuleResponse error : errors) {
@@ -38,10 +62,24 @@ public final class FluentValidationExecutor {
         }
     }
 
+    /**
+     * Método de conveniencia para validar TraceIdentifierAdapter.
+     * Mantiene compatibilidad con código existente.
+     * 
+     * @param traceIdentifier Objeto a validar
+     * @return Lista de errores de validación
+     */
     public static List<ValidationResultAdapter> validate(TraceIdentifierAdapter traceIdentifier) {
         return execute(traceIdentifier, TraceIdentifierAdapterValidator::new);
     }
 
+    /**
+     * Limpia y valida un string, retornando un fallback si está vacío o nulo.
+     * 
+     * @param value String a sanitizar
+     * @param fallback Valor por defecto si value es nulo o vacío
+     * @return String sanitizado o fallback
+     */
     public static String sanitize(String value, String fallback) {
         if (value == null) {
             return fallback;

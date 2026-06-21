@@ -48,9 +48,7 @@ public class ExampleUseCase implements ExamplePort {
         
         // Equivalente a FluentValidation en C# .NET.
         // Primero validamos headers antes de ejecutar lógica de negocio.
-        List<ValidationResultAdapter> traceValidationErrors = FluentValidationExecutor.execute(
-                headers, 
-                TraceIdentifierAdapterValidator::new);
+        List<ValidationResultAdapter> traceValidationErrors = FluentValidationExecutor.execute(headers, TraceIdentifierAdapterValidator::new);
         if (!traceValidationErrors.isEmpty()) {
             return CompletableFuture.completedFuture(
                     EasyResult.failure(VALIDATION_FAILED_STATUS, traceValidationErrors)
