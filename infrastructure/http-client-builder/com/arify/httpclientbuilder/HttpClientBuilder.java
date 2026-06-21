@@ -3,12 +3,9 @@ package com.arify.httpclientbuilder;
 import com.arify.domain.commons.CancellationReason;
 import com.arify.domain.commons.CancellationToken;
 import com.arify.domain.containers.memoryevents.MicroserviceCallMemoryQueue;
-import com.arify.domain.entities.HttpResponseEntity;
+import com.arify.httpclientbuilder.entities.HttpResponseEntity;
 import com.arify.domain.entities.MicroserviceCallTraceEntity;
 import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
-
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -23,29 +20,25 @@ import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
 public class HttpClientBuilder {
-    public static final int MAX_TRACE_PAYLOAD_LENGTH = 4096;
+    private static final int MAX_TRACE_PAYLOAD_LENGTH = 4096;
+    private static final Logger LOGGER = Logger.getLogger(HttpClientBuilder.class.getName());
 
-    public final HttpClientConnector apiClient;
-    public final Logger logger;
-    public final ObjectMapper objectMapper;
-    public final OffsetDateTime startDatetime;
+    private final HttpClientConnector apiClient;
+    private final OffsetDateTime startDatetime;
 
-    public String baseUrl;
-    public String endpoint;
-    public final Map<String, String> headers;
-    public final Map<String, String> pathParams;
-    public final Map<String, String> query;
-    public boolean memoryEnabled;
-    public MicroserviceCallMemoryQueue container;
-    public String operationName;
-    public String keyword;
-    public Duration timeout;
+    private String baseUrl;
+    private String endpoint;
+    private final Map<String, String> headers;
+    private final Map<String, String> pathParams;
+    private final Map<String, String> query;
+    private boolean memoryEnabled;
+    private MicroserviceCallMemoryQueue container;
+    private String operationName;
+    private String keyword;
+    private Duration timeout;
 
     public HttpClientBuilder(HttpClientConnector apiClient, Logger logger) {
         this.apiClient = apiClient;
-        this.logger = logger;
-        this.objectMapper = new ObjectMapper();
-        this.objectMapper.registerModule(new JavaTimeModule());
         this.startDatetime = OffsetDateTime.now();
         this.baseUrl = "";
         this.endpoint = "";
@@ -201,7 +194,7 @@ public class HttpClientBuilder {
 
                         int statusCode = cancellationStatusCode(cancellationToken);
                         
-                        logger.log(Level.WARNING, InfrastructureLogger.format(
+                        LOGGER.log(Level.WARNING, InfrastructureLogger.format(
                                 "WARNING",
                                 cause.getMessage(),
                                 null,
@@ -230,11 +223,8 @@ public class HttpClientBuilder {
 
         String serialized;
         try {
-            if (payload instanceof Map || payload instanceof Iterable) {
-                serialized = objectMapper.writeValueAsString(payload);
-            } else {
-                serialized = payload.toString();
-            }
+            // JsonNode se serializa directamente con Jackson
+            serialized = HttpClientConnector.getObjectMapper().writeValueAsString(payload);
         } catch (JsonProcessingException exception) {
             serialized = payload.toString();
         }
@@ -251,6 +241,12 @@ public class HttpClientBuilder {
             return;
         }
 
+        // El body del response ahora es JsonNode, serializamos si no es null
+        String responseBody = null;
+        if (response.body() != null && !response.body().isNull()) {
+            responseBody = serializePayload(response.body());
+        }
+
         MicroserviceCallTraceEntity traceEntity = new MicroserviceCallTraceEntity(
                 UUID.randomUUID().toString(),
                 headers.getOrDefault("message-identification", ""),
@@ -264,11 +260,11 @@ public class HttpClientBuilder {
                 serializePayload(body),
                 startDatetime,
                 response.statusCode(),
-                serializePayload(response.body()),
+                responseBody,
                 OffsetDateTime.now());
 
         if (!container.tryPush(traceEntity)) {
-            logger.warning(InfrastructureLogger.format(
+            LOGGER.warning(InfrastructureLogger.format(
                     "WARNING",
                     "Memory trace queue is full",
                     traceEntity.traceId(),
@@ -300,7 +296,7 @@ public class HttpClientBuilder {
         try {
             Map<String, String> errorMap = new HashMap<>();
             errorMap.put("error", errorMessage);
-            errorPayload = objectMapper.writeValueAsString(errorMap);
+            errorPayload = HttpClientConnector.getObjectMapper().writeValueAsString(errorMap);
         } catch (JsonProcessingException exception) {
             errorPayload = "{\"error\":\"" + errorMessage + "\"}";
         }
@@ -322,7 +318,7 @@ public class HttpClientBuilder {
                 OffsetDateTime.now());
 
         if (!container.tryPush(traceEntity)) {
-            logger.warning(InfrastructureLogger.format(
+            LOGGER.warning(InfrastructureLogger.format(
                     "WARNING",
                     "Memory trace queue is full",
                     traceEntity.traceId(),

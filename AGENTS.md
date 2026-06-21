@@ -64,6 +64,14 @@ Estas APIs deben estar orientadas a cargas **data-intensive** en primer lugar y 
 - Use Cases: Inyectar como `@ApplicationScoped`. Los casos de uso no deben tener estado que varíe entre peticiones.
 - Handlers/Helpers que NO tienen dependencias inyectables: Clase con constructor privado y métodos `static`.
 
+**5. Manejo de Excepciones (Arquitectura de Flujo)**
+- **PROHIBIDO usar `try-catch` en `infrastructure` y `application`**: Las excepciones deben fluir naturalmente hacia `presentation`.
+- **`infrastructure`**: NO atrapar `JsonProcessingException`, `IOException`, `TimeoutException` ni errores de parsing/HTTP. Dejarlas propagarse.
+- **`application`**: NO atrapar excepciones de infraestructura. Solo validar datos de negocio con `EasyResult`.
+- **`presentation`**: Única capa autorizada para `try-catch`. Los controladores capturan todas las excepciones (timeout, parsing, validación, infraestructura) y las mapean a respuestas HTTP apropiadas.
+- **Beneficio**: Arquitectura clara de responsabilidades. Infraestructura y aplicación se mantienen puras, sin lógica de manejo de errores que oscurezca el happy path. La presentación actúa como "safety net" global.
+- **Excepción a la regla**: Solo si una excepción debe enriquecerse con contexto específico de infraestructura antes de propagarse (ej: agregar traceId), se permite `catch + throw` (re-throw con contexto adicional), NUNCA `catch` silencioso o con retorno de valor por defecto.
+
 ### Reglas de Medición
 
 - Medir antes de concluir. Una medicion de Postman incluye cliente, red local, dispatch HTTP, Jackson, logs, trazas, warmup y respuesta; no equivale a validacion pura.

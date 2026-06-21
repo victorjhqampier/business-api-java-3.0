@@ -2,12 +2,12 @@ package com.arify.httpclientbuilder;
 
 import com.arify.domain.commons.CancellationReason;
 import com.arify.domain.commons.CancellationToken;
-import com.arify.domain.entities.HttpResponseEntity;
+import com.arify.httpclientbuilder.entities.HttpResponseEntity;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.NullNode;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
-
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
@@ -24,24 +24,25 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-import java.util.stream.Collectors;
 
 public class HttpClientConnector {
-    public final HttpClient client;
-    public final ObjectMapper objectMapper;
-    public final Duration defaultTimeout;
-    public final Logger logger;
+    private static final Logger LOGGER = Logger.getLogger(HttpClientConnector.class.getName());
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper().registerModule(new JavaTimeModule());
+    
+    private final HttpClient client;
+    private final Duration defaultTimeout;
 
     public HttpClientConnector(Duration defaultTimeout, Duration connectTimeout) {
         this.defaultTimeout = defaultTimeout;
-        this.logger = InfrastructureLogger.setLogger();
-        this.objectMapper = new ObjectMapper();
-        this.objectMapper.registerModule(new JavaTimeModule());
         this.client = HttpClient.newBuilder()
                 .connectTimeout(connectTimeout)
-                .version(HttpClient.Version.HTTP_1_1)
+                .version(HttpClient.Version.HTTP_2) // HTTP/2 con fallback automático a HTTP/1.1
                 .followRedirects(HttpClient.Redirect.NORMAL)
                 .build();
+    }
+    
+    public static ObjectMapper getObjectMapper() {
+        return OBJECT_MAPPER;
     }
 
     public void close() {
@@ -128,7 +129,7 @@ public class HttpClientConnector {
                         HttpResponseEntity result = buildResponse(response);
 
                         if (result.statusCode() >= 400) {
-                            logger.warning(String.format(
+                            LOGGER.warning(String.format(
                                     "HTTP request returned non-success status. Method=[%s] Url=[%s] StatusCode=[%d]",
                                     method, result.url(), result.statusCode()));
                         }
@@ -155,19 +156,19 @@ public class HttpClientConnector {
                             if (cancellationToken != null) {
                                 cancellationToken.cancel(CancellationReason.TIMEOUT);
                             }
-                            logger.warning(String.format("HTTP request timed out. Method=[%s] Url=[%s]", method, url));
+                            LOGGER.warning(String.format("HTTP request timed out. Method=[%s] Url=[%s]", method, url));
                             throw new CompletionException(new java.util.concurrent.TimeoutException("HTTP request timed out"));
                         }
 
                         // Para cualquier otra excepción, logear y propagar
-                        logger.log(Level.WARNING, String.format(
+                        LOGGER.log(Level.WARNING, String.format(
                                 "HTTP request failed. Method=[%s] Url=[%s] Error=[%s]",
                                 method, url, cause.getMessage()), cause);
                         throw new CompletionException(new RuntimeException("HTTP request failed", cause));
                     });
 
         } catch (Exception exception) {
-            logger.log(Level.WARNING, String.format(
+            LOGGER.log(Level.WARNING, String.format(
                     "HTTP request failed during setup. Method=[%s] Url=[%s] Error=[%s]",
                     method, url, exception.getMessage()), exception);
             return CompletableFuture.failedFuture(new RuntimeException("HTTP request failed during setup", exception));
@@ -175,37 +176,39 @@ public class HttpClientConnector {
     }
 
     public HttpResponseEntity buildResponse(HttpResponse<String> response) {
-        String body = response.body();
-        String contentBody = readJsonContent(body, response.headers().firstValue("content-type").orElse(""));
+        String rawBody = response.body();
+        JsonNode jsonBody = parseBodyToJson(rawBody, response.uri().toString());
 
         Map<String, List<String>> headers = new HashMap<>(response.headers().map());
 
         return new HttpResponseEntity(
                 response.statusCode(),
-                contentBody,
+                jsonBody,
                 headers,
                 response.uri().toString());
     }
 
-    public String readJsonContent(String body, String contentType) {
+    // Parsing centralizado con logging de errores de deserialización
+    public JsonNode parseBodyToJson(String body, String url) {
+        // Si el body está vacío, retornar un nodo nulo
         if (body == null || body.isEmpty()) {
-            return null;
-        }
-
-        if (!contentType.toLowerCase().contains("json")) {
-            return body;
+            return NullNode.getInstance();
         }
 
         try {
-            JsonNode jsonNode = objectMapper.readTree(body);
-            if (jsonNode.isArray()) {
-                Map<String, JsonNode> wrapper = new HashMap<>();
-                wrapper.put("data", jsonNode);
-                return objectMapper.writeValueAsString(wrapper);
-            }
-            return body;
+            return OBJECT_MAPPER.readTree(body);
         } catch (JsonProcessingException exception) {
-            return body;
+            // LOG CRÍTICO: Error de deserialización con contexto para diagnóstico
+            String bodyPreview = body.length() > 200 ? body.substring(0, 200) + "..." : body;
+            LOGGER.log(Level.SEVERE, InfrastructureLogger.format(
+                    "SEVERE",
+                    "JSON deserialization failed",
+                    null,
+                    "{\"url\":\"" + url + "\",\"body_preview\":\"" + bodyPreview.replace("\"", "\\\"") + "\"}",
+                    "\"" + exception.getMessage() + "\""));
+            
+            // Re-lanzar como unchecked para que fluya a presentación
+            throw new RuntimeException("Failed to parse JSON response from: " + url, exception);
         }
     }
 
@@ -214,11 +217,18 @@ public class HttpClientConnector {
             return url;
         }
 
-        String queryString = params.entrySet().stream()
-                .map(entry -> URLEncoder.encode(entry.getKey(), StandardCharsets.UTF_8)
-                        + "="
-                        + URLEncoder.encode(entry.getValue(), StandardCharsets.UTF_8))
-                .collect(Collectors.joining("&"));
+        // Optimizado: StringBuilder en lugar de Streams para minimizar allocaciones
+        StringBuilder queryString = new StringBuilder();
+        boolean first = true;
+        for (Map.Entry<String, String> entry : params.entrySet()) {
+            if (!first) {
+                queryString.append("&");
+            }
+            queryString.append(URLEncoder.encode(entry.getKey(), StandardCharsets.UTF_8))
+                    .append("=")
+                    .append(URLEncoder.encode(entry.getValue(), StandardCharsets.UTF_8));
+            first = false;
+        }
 
         return url.contains("?") ? url + "&" + queryString : url + "?" + queryString;
     }
@@ -229,7 +239,7 @@ public class HttpClientConnector {
         }
 
         try {
-            return objectMapper.writeValueAsString(data);
+            return OBJECT_MAPPER.writeValueAsString(data);
         } catch (JsonProcessingException exception) {
             throw new RuntimeException("Failed to serialize JSON body", exception);
         }
