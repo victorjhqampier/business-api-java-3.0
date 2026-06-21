@@ -12,7 +12,6 @@ import com.arify.application.ports.ExamplePort;
 import com.arify.domain.commons.CancellationToken;
 import com.arify.domain.entities.FakeApiEntity;
 import com.arify.domain.interfaces.IFakeApiInfrastructure;
-
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
@@ -20,7 +19,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 
-// Implementa el puerto de entrada ExamplePort.
+// Implement el puerto de entrada ExamplePort.
 // Orquesta la lógica de negocio y validación, sin manejar excepciones de infraestructura.
 // Siguiendo el patrón C#, las excepciones fluyen hacia el controlador.
 public class ExampleUseCase implements ExamplePort {
