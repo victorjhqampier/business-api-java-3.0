@@ -264,11 +264,12 @@ public class HttpClientBuilder {
                 OffsetDateTime.now());
 
         if (!container.tryPush(traceEntity)) {
-            LOGGER.warning(InfrastructureLogger.format(
+            LOGGER.log(Level.WARNING, InfrastructureLogger.format(
                     "WARNING",
-                    "Memory trace queue is full",
-                    traceEntity.traceId(),
-                    "{\"entity\":\"" + traceEntity + "\"}",
+                    "Trace dropped - queue full",
+                    null,
+                    String.format("{\"capacity\":%d,\"length\":%d,\"operation\":\"%s\",\"url\":\"%s\"}",
+                            container.capacity(), container.approxLength(), operationName, response.url()),
                     "null"));
         }
     }
@@ -318,12 +319,13 @@ public class HttpClientBuilder {
                 OffsetDateTime.now());
 
         if (!container.tryPush(traceEntity)) {
-            LOGGER.warning(InfrastructureLogger.format(
+            LOGGER.log(Level.WARNING, InfrastructureLogger.format(
                     "WARNING",
-                    "Memory trace queue is full",
-                    traceEntity.traceId(),
-                    "{\"entity\":\"" + traceEntity + "\"}",
-                "null"));
+                    "Trace dropped - queue full",
+                    null,
+                    String.format("{\"capacity\":%d,\"length\":%d,\"operation\":\"%s\",\"url\":\"%s\"}",
+                            container.capacity(), container.approxLength(), operationName, requestUrl),
+                    "null"));
         }
     }
 

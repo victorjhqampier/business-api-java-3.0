@@ -8,6 +8,7 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 
 import java.time.OffsetDateTime;
 import java.util.UUID;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 
 public class MicroserviceTraceHandler {
@@ -64,7 +65,9 @@ public class MicroserviceTraceHandler {
                 OffsetDateTime.now());
 
         if (!queue.tryPush(traceEntity)) {
-            LOGGER.warning("Microservice trace queue is full");
+            LOGGER.log(Level.WARNING, String.format(
+                    "Trace dropped - queue full. Capacity=%d, ApproxLength=%d, Operation=%s",
+                    queue.capacity(), queue.approxLength(), operationName));
         }
     }
 

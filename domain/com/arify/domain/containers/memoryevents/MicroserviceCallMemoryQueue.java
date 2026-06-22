@@ -9,10 +9,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class MicroserviceCallMemoryQueue {
-    public final int capacity;
-    public final LinkedBlockingQueue<MicroserviceCallTraceEntity> queue;
-    public final AtomicBoolean completed;
-    public final AtomicInteger length;
+    private final int capacity;
+    private final LinkedBlockingQueue<MicroserviceCallTraceEntity> queue;
+    private final AtomicBoolean completed;
+    private final AtomicInteger length;
 
     public MicroserviceCallMemoryQueue() {
         this(1000);

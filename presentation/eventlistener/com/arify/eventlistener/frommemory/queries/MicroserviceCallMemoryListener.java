@@ -4,9 +4,7 @@ import com.arify.domain.containers.memoryevents.MicroserviceCallMemoryQueue;
 import com.arify.domain.entities.MicroserviceCallTraceEntity;
 import com.arify.eventlistener.EventListenerLogger;
 import jakarta.enterprise.context.ApplicationScoped;
-import java.time.Duration;
 import java.util.List;
-import java.util.concurrent.ThreadLocalRandom;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -47,20 +45,21 @@ public class MicroserviceCallMemoryListener {
     public void executeAsync() {
         while (isRunning) {
             try {
-                List<MicroserviceCallTraceEntity> events = container.readAllAsync(10, 1.0);
+                List<MicroserviceCallTraceEntity> events = container.readAllAsync(100, 1.0);
 
-                if (!events.isEmpty()) {
-                    for (MicroserviceCallTraceEntity event : events) {
-                        Thread.sleep(Duration.ofSeconds(ThreadLocalRandom.current().nextInt(0, 2)));
-                        logger.warning(EventListenerLogger.format(
-                                "WARNING",
-                                "Memory event detected",
-                                event.traceId(),
-                                "{\"request_url\":\"" + event.requestUrl() + "\","
-                                        + "\"request_datetime\":\"" + event.requestDatetime() + "\","
-                                        + "\"response_datetime\":\"" + event.responseDatetime() + "\"}",
-                                "null"));
-                    }
+                for (MicroserviceCallTraceEntity event : events) {
+                    logger.warning(EventListenerLogger.format(
+                            "WARNING",
+                            "Memory event processed",
+                            event.traceId(),
+                            String.format("{\"method\":\"%s\",\"url\":\"%s\",\"status\":%d,\"operation\":\"%s\",\"req_time\":\"%s\",\"res_time\":\"%s\"}",
+                                    event.method(),
+                                    event.requestUrl(),
+                                    event.responseStatusCode(),
+                                    event.operationName(),
+                                    event.requestDatetime(),
+                                    event.responseDatetime()),
+                            "null"));
                 }
             } catch (Exception exception) {
                 logger.log(Level.SEVERE, EventListenerLogger.format(
