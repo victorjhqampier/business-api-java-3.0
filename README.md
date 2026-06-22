@@ -11,6 +11,35 @@ Este template esta orientado a APIs **data-intensive** primero y **processing-in
 - Quarkus 3.x
 - OpenAPI y Health checks habilitados
 
+## Build y ejecucion en modo jar:
+
+```bash
+./presentation/businessapi/mvnw -f pom.xml -pl presentation/businessapi -am clean package
+java -jar presentation/businessapi/target/quarkus-app/quarkus-run.jar
+```
+
+## Swagger UI y OpenAPI
+
+- Swagger UI (local): http://localhost:8080/q/swagger-ui
+- OpenAPI JSON (local): http://localhost:8080/openapi
+
+## Endpoints base
+
+- GET /
+- GET /ping
+- GET /health
+- GET /health/live
+- GET /health/ready
+
+## Recomendaciones para iniciar un nuevo microservicio
+
+1. Reemplazar nombres Example* por tu contexto de negocio.
+2. Definir puertos de salida en application y sus adaptadores en infrastructure.
+3. Agregar pruebas unitarias de use cases y pruebas de integracion por endpoint critico.
+4. Configurar pipeline CI para ejecutar compile, test y analisis estatico.
+
+
+
 ## Estructura de capas
 
 - domain: entidades y reglas de dominio puras, sin dependencias de framework.
@@ -118,30 +147,3 @@ Desde la raiz del proyecto:
 # Optional with reload
 mvn -f pom.xml io.quarkus.platform:quarkus-maven-plugin:3.34.1:dev -pl presentation/businessapi -am
 ```
-
-Build y ejecucion en modo jar:
-
-```bash
-./presentation/businessapi/mvnw -f pom.xml -pl presentation/businessapi -am clean package
-java -jar presentation/businessapi/target/quarkus-app/quarkus-run.jar
-```
-
-## Swagger UI y OpenAPI
-
-- Swagger UI (local): http://localhost:8080/q/swagger-ui
-- OpenAPI JSON (local): http://localhost:8080/openapi
-
-## Endpoints base
-
-- GET /
-- GET /ping
-- GET /health
-- GET /health/live
-- GET /health/ready
-
-## Recomendaciones para iniciar un nuevo microservicio
-
-1. Reemplazar nombres Example* por tu contexto de negocio.
-2. Definir puertos de salida en application y sus adaptadores en infrastructure.
-3. Agregar pruebas unitarias de use cases y pruebas de integracion por endpoint critico.
-4. Configurar pipeline CI para ejecutar compile, test y analisis estatico.

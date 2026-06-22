@@ -4,18 +4,17 @@ import java.time.Duration;
 import java.util.concurrent.ExecutorService;
 import java.util.logging.Logger;
 
-/**
- * Factory para inicialización de HttpClientConnector.
- * 
- * <p>Responsabilidades:</p>
- * <ul>
- *   <li>Leer configuraciones de timeouts desde variables de entorno (priorizando ENV sobre defaults).</li>
- *   <li>Inyectar el ExecutorService (Virtual Threads) al conector HTTP.</li>
- *   <li>Proveer un punto único de inicialización para el Composition Root.</li>
- * </ul>
- * 
- * <p>Patrón homologado con RedisStarting y FakeApiStarting.</p>
- */
+/* ********************************************************************************************************
+ * Copyright © 2026 Arify Labs - All rights reserved.
+ *
+ * Info                  : Factory for HttpClientConnector initialization (reads ENV timeouts, injects virtual thread executor).
+ *
+ * By                    : Victor Jhampier Caxi Maquera
+ * Email/Mobile/Phone    : victorjhampier@gmail.com | 968991*14
+ *
+ * Creation date         : 22/06/2026 3:05h
+ **********************************************************************************************************/
+
 public final class HttpClientStarting {
     private static final Logger LOGGER = Logger.getLogger(HttpClientStarting.class.getName());
     

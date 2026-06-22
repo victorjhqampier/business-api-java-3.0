@@ -2,6 +2,18 @@ package com.arify.fakeapiinfra;
 
 import java.time.Duration;
 
+/* ********************************************************************************************************
+ * Copyright © 2026 Arify Labs - All rights reserved.
+ *
+ * Info                  : Fake API configuration holder (hosts, timeouts) read from environment variables.
+ *
+ * By                    : Victor Jhampier Caxi Maquera
+ * Email/Mobile/Phone    : victorjhampier@gmail.com | 968991*14
+ *
+ * Creation date         : 22/06/2026 3:05h
+ **********************************************************************************************************/
+
+
 public final class FakeApiStarting {
     public static final String EXAMPLE_HOST_BASE = envOrDefault("EXAMPLE_HOST_BASE", "https://jsonplaceholder.typicode.com");
     public static final String EXAMPLE_TITLE_BASE = envOrDefault("EXAMPLE_TITLE_BASE", "https://fakerapi.it");

@@ -5,6 +5,17 @@ import redis.clients.jedis.HostAndPort;
 import redis.clients.jedis.JedisPooled;
 import java.util.logging.Logger;
 
+/* ********************************************************************************************************
+ * Copyright © 2026 Arify Labs - All rights reserved.
+ *
+ * Info                  : Redis connection factory (JedisPooled initialization from ENV variables).
+ *
+ * By                    : Victor Jhampier Caxi Maquera
+ * Email/Mobile/Phone    : victorjhampier@gmail.com | 968991*14
+ *
+ * Creation date         : 22/06/2026 3:05h
+ **********************************************************************************************************/
+
 public final class RedisStarting {
     private static final Logger LOGGER = Logger.getLogger(RedisStarting.class.getName());
 

@@ -141,6 +141,10 @@ mvn package -Pnative -DskipTests
   // Uso:
   List<ValidationResultAdapter> errors = FluentValidationExecutor.execute(trace, TRACE_IDENTIFIER_VALIDATOR);
   ```
+- **Integración con CacheLibraryService**: 
+  - Usar tipos concretos en `resolveAsync(..., ConcreteType.class, ...)` para evitar type erasure y casts manuales.
+  - Manejar `Optional` de infraestructura inline: `loader -> infra.callAsync(...).thenApply(opt -> opt.orElse(null))`.
+  - Evitar clases "Support" o métodos privados para transformaciones simples; mantener el caso de uso autocontenido.
 - **Virtual threads**: 
   - En `presentation`: usar `@RunOnVirtualThread` en endpoints REST.
   - En `application`: usar solo Java nativo (`ExecutorService` inyectado, `CompletableFuture.*Async(..., executor)`).

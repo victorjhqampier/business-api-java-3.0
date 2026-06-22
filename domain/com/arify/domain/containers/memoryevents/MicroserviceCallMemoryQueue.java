@@ -8,6 +8,18 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
+/* ********************************************************************************************************
+ * Copyright © 2026 Arify Labs - All rights reserved.
+ *
+ * Info                  : In-memory queue for microservice call trace events (LinkedBlockingQueue).
+ *
+ * By                    : Victor Jhampier Caxi Maquera
+ * Email/Mobile/Phone    : victorjhampier@gmail.com | 968991*14
+ *
+ * Creation date         : 22/06/2026 3:05h
+ **********************************************************************************************************/
+
+
 public class MicroserviceCallMemoryQueue {
     private final int capacity;
     private final LinkedBlockingQueue<MicroserviceCallTraceEntity> queue;

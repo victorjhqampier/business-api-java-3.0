@@ -11,6 +11,17 @@ import jakarta.inject.Named;
 import java.util.concurrent.ExecutorService;
 import java.util.logging.Logger;
 
+/* ********************************************************************************************************
+ * Copyright © 2026 Arify Labs - All rights reserved.
+ *
+ * Info                  : Composition Root - Application layer wiring (CacheLibraryService, use cases).
+ *
+ * By                    : Victor Jhampier Caxi Maquera
+ * Email/Mobile/Phone    : victorjhampier@gmail.com | 968991*14
+ *
+ * Creation date         : 22/06/2026 3:05h
+ **********************************************************************************************************/
+
 @ApplicationScoped
 public class ApplicationStartUp {
     private static final Logger LOGGER = Logger.getLogger(ApplicationStartUp.class.getName());

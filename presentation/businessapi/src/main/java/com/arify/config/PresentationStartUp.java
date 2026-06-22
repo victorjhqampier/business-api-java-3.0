@@ -7,16 +7,19 @@ import io.quarkus.runtime.StartupEvent;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.event.Observes;
 import jakarta.enterprise.inject.Produces;
-
 import java.util.logging.Logger;
 
-/**
- * Configuración de componentes de presentación y lifecycle de la aplicación.
- * 
- * <p><strong>Símil .NET:</strong> Equivale a registrar un {@code IHostedService} 
- * o {@code BackgroundService} que se arranca al inicio de la aplicación y 
- * se detiene al cerrar ({@code StartupEvent}/{@code ShutdownEvent}).</p>
- */
+/* ********************************************************************************************************
+ * Copyright © 2026 Arify Labs - All rights reserved.
+ *
+ * Info                  : Composition Root - Presentation lifecycle (startup/shutdown hooks, background services).
+ *
+ * By                    : Victor Jhampier Caxi Maquera
+ * Email/Mobile/Phone    : victorjhampier@gmail.com | 968991*14
+ *
+ * Creation date         : 22/06/2026 3:05h
+ **********************************************************************************************************/
+
 @ApplicationScoped
 public class PresentationStartUp {
     private static final Logger LOGGER = Logger.getLogger(PresentationStartUp.class.getName());

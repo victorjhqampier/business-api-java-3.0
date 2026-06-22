@@ -14,17 +14,17 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.logging.Logger;
 
-/**
- * Configuración de recursos técnicos globales del sistema.
- * 
- * <p><strong>Símil .NET:</strong> Equivale a configuraciones base del Runtime:<br>
- * {@code builder.Services.AddSingleton<HttpClient>();}<br>
- * {@code builder.Services.AddSingleton(ThreadPool);}<br>
- * {@code builder.Services.AddSingleton<MemoryQueue>();}</p>
- * 
- * <p>Todos los componentes son Singletons ({@code @ApplicationScoped}) 
- * para máximo rendimiento.</p>
- */
+/* ********************************************************************************************************
+ * Copyright © 2026 Arify Labs - All rights reserved.
+ *
+ * Info                  : Composition Root - Global technical resources (virtual thread executor, HTTP connector, Redis, memory queue).
+ *
+ * By                    : Victor Jhampier Caxi Maquera
+ * Email/Mobile/Phone    : victorjhampier@gmail.com | 968991*14
+ *
+ * Creation date         : 22/06/2026 3:05h
+ **********************************************************************************************************/
+
 @ApplicationScoped
 public class GlobalStartUp {
     private static final Logger LOGGER = Logger.getLogger(GlobalStartUp.class.getName());

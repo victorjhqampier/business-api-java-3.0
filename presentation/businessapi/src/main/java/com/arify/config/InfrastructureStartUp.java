@@ -10,9 +10,19 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.inject.Produces;
 import jakarta.inject.Named;
 import redis.clients.jedis.JedisPooled;
-
 import java.util.concurrent.ExecutorService;
 import java.util.logging.Logger;
+
+/* ********************************************************************************************************
+ * Copyright © 2026 Arify Labs - All rights reserved.
+ *
+ * Info                  : Composition Root - Infrastructure adapters wiring (FakeApiCommand, RedisCacheInfrastructure).
+ *
+ * By                    : Victor Jhampier Caxi Maquera
+ * Email/Mobile/Phone    : victorjhampier@gmail.com | 968991*14
+ *
+ * Creation date         : 22/06/2026 3:05h
+ **********************************************************************************************************/
 
 @ApplicationScoped
 public class InfrastructureStartUp {

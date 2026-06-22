@@ -2,27 +2,17 @@ package com.arify.domain.containers.cachelibraryservice;
 
 import java.util.Objects;
 
-/**
- * Punto de entrada del servicio de cache.
- * 
- * <p>Recibe un provider (ICacheInfrastructure) en su constructor y permite crear
- * builders fluidos mediante forKey(). La instancia de este servicio es ligera y
- * puede crearse por caso de uso. El recurso compartido y costoso vive en el provider
- * (conexión Redis, pool, cliente DynamoDB, etc.).</p>
- * 
- * <p>No debe registrarse como singleton global en Application. El provider sí debe
- * ser singleton (@ApplicationScoped).</p>
- * 
- * <p>Ejemplo de uso:</p>
- * <pre>{@code
- * var cache = new CacheLibraryService(provider);
- * var result = cache.forKey("cfg-11-currencies")
- *     .useStrategy(CacheStrategy.CACHE_THEN_SOURCE_AND_STORE)
- *     .withTtl(Duration.ofMinutes(10))
- *     .resolveAsync(token -> fetchFromSource(token), MyType.class, cancellationToken)
- *     .join();
- * }</pre>
- */
+/* ********************************************************************************************************
+ * Copyright © 2026 Arify Labs - All rights reserved.
+ *
+ * Info                  : Cache Library Service - Entry point for cache queries (fluent builder via forKey).
+ *
+ * By                    : Victor Jhampier Caxi Maquera
+ * Email/Mobile/Phone    : victorjhampier@gmail.com | 968991*14
+ *
+ * Creation date         : 22/06/2026 3:05h
+ **********************************************************************************************************/
+
 public final class CacheLibraryService {
     private final ICacheInfrastructure provider;
 
