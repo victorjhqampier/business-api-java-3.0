@@ -22,6 +22,7 @@ import java.util.Map;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutorService;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -32,12 +33,24 @@ public class HttpClientConnector {
     private final HttpClient client;
     private final Duration defaultTimeout;
 
+    // Constructor original (mantiene compatibilidad)
     public HttpClientConnector(Duration defaultTimeout, Duration connectTimeout) {
         this.defaultTimeout = defaultTimeout;
         this.client = HttpClient.newBuilder()
                 .connectTimeout(connectTimeout)
                 .version(HttpClient.Version.HTTP_2) // HTTP/2 con fallback automático a HTTP/1.1
                 .followRedirects(HttpClient.Redirect.NORMAL)
+                .build();
+    }
+
+    // Constructor con Virtual Threads (Alto Rendimiento)
+    public HttpClientConnector(Duration defaultTimeout, Duration connectTimeout, ExecutorService executor) {
+        this.defaultTimeout = defaultTimeout;
+        this.client = HttpClient.newBuilder()
+                .connectTimeout(connectTimeout)
+                .version(HttpClient.Version.HTTP_2)
+                .followRedirects(HttpClient.Redirect.NORMAL)
+                .executor(executor) // Inyección de Virtual Threads para I/O-bound
                 .build();
     }
     

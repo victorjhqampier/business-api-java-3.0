@@ -10,6 +10,7 @@ import com.arify.application.internals.executors.EasyResult;
 import com.arify.application.internals.executors.FluentValidationExecutor;
 import com.arify.application.ports.ExamplePort;
 import com.arify.domain.commons.CancellationToken;
+import com.arify.domain.containers.cachelibraryservice.CacheLibraryService;
 import com.arify.domain.entities.FakeApiEntity;
 import com.arify.domain.interfaces.IFakeApiInfrastructure;
 import java.util.List;
@@ -32,12 +33,17 @@ public class ExampleUseCase implements ExamplePort {
     // Ejemplo C#: private readonly IFakeApiInfrastructure _fakeApi;
     public final IFakeApiInfrastructure fakeApi;
 
+    // Servicio de cache inyectado (Singleton que encapsula el provider de cache).
+    // Ejemplo de uso: cacheLibrary.forKey("key").useStrategy(...).resolveAsync(...)
+    public final CacheLibraryService cacheLibrary;
+
     // Executor Java puro para continuaciones del caso de uso.
     // El composition root decide si lo implementa con virtual threads u otra estrategia.
     public final ExecutorService myThreadExec;
 
-    public ExampleUseCase(IFakeApiInfrastructure fakeApi, ExecutorService executor) {
+    public ExampleUseCase(IFakeApiInfrastructure fakeApi, CacheLibraryService cacheLibrary, ExecutorService executor) {
         this.fakeApi = fakeApi;
+        this.cacheLibrary = cacheLibrary;
         this.myThreadExec = executor;
     }
 
@@ -95,6 +101,13 @@ public class ExampleUseCase implements ExamplePort {
 
                     return EasyResult.success(result);
                 }, myThreadExec);
+        
+        // Ejemplo de uso de CacheLibraryService (patrón fluido):
+        // String cacheKey = "example-user-" + exampleRequest.name();
+        // return cacheLibrary.forKey(cacheKey)
+        //         .useStrategy(CacheStrategy.CACHE_THEN_SOURCE_AND_STORE)
+        //         .withTtl(Duration.ofMinutes(5))
+        //         .resolveAsync(token -> fetchDataFromExternalApis(exampleRequest, token), CreateExampleAdapter.class, token);
     }
 
     private int randomId() {

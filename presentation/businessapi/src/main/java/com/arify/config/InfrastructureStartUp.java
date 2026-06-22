@@ -8,8 +8,10 @@ import com.arify.httpclientbuilder.HttpClientConnector;
 import com.arify.redisinfra.general.RedisCacheInfrastructure;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.inject.Produces;
+import jakarta.inject.Named;
 import redis.clients.jedis.JedisPooled;
 
+import java.util.concurrent.ExecutorService;
 import java.util.logging.Logger;
 
 @ApplicationScoped
@@ -25,8 +27,8 @@ public class InfrastructureStartUp {
 
     @Produces
     @ApplicationScoped
-    public ICacheInfrastructure cacheInfrastructure(JedisPooled jedisPooled) {
+    public ICacheInfrastructure cacheInfrastructure(JedisPooled jedisPooled, @Named("virtualThreadExecutor") ExecutorService virtualThreadExecutor) {
         LOGGER.info("services.AddSingleton<ICacheInfrastructure, RedisCacheInfrastructure>()");
-        return new RedisCacheInfrastructure(jedisPooled);
+        return new RedisCacheInfrastructure(jedisPooled, virtualThreadExecutor);
     }
 }

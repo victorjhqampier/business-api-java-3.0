@@ -19,6 +19,8 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -71,12 +73,28 @@ public final class RedisCacheInfrastructure implements ICacheInfrastructure {
     private static final AtomicLong unavailableUntilUnixMilliseconds = new AtomicLong(0);
 
     private final JedisPooled jedis;
+    private final ExecutorService executor;
 
+    // Constructor original (mantiene compatibilidad)
     public RedisCacheInfrastructure(JedisPooled jedis) {
         if (jedis == null) {
             throw new IllegalArgumentException("jedis cannot be null");
         }
         this.jedis = jedis;
+        this.executor = ForkJoinPool.commonPool(); // Fallback al pool por defecto
+        LOGGER.warning("RedisCacheInfrastructure initialized without explicit executor. Using ForkJoinPool.commonPool(). For high performance, inject Virtual Threads.");
+    }
+
+    // Constructor con Virtual Threads (Alto Rendimiento - Recomendado)
+    public RedisCacheInfrastructure(JedisPooled jedis, ExecutorService executor) {
+        if (jedis == null) {
+            throw new IllegalArgumentException("jedis cannot be null");
+        }
+        if (executor == null) {
+            throw new IllegalArgumentException("executor cannot be null");
+        }
+        this.jedis = jedis;
+        this.executor = executor;
     }
 
     @Override
@@ -116,7 +134,7 @@ public final class RedisCacheInfrastructure implements ICacheInfrastructure {
                 LOGGER.log(Level.SEVERE, "Redis cache get failed. CacheId=[" + id + "]", ex);
                 throw new RuntimeException("Redis cache get failed", ex);
             }
-        });
+        }, executor);
     }
 
     @Override
@@ -148,7 +166,7 @@ public final class RedisCacheInfrastructure implements ICacheInfrastructure {
                 LOGGER.log(Level.SEVERE, "Redis cache create failed. CacheId=[" + record.id() + "] Status=[" + record.status() + "]", ex);
                 throw new RuntimeException("Redis cache create failed", ex);
             }
-        });
+        }, executor);
     }
 
     @Override
@@ -206,7 +224,7 @@ public final class RedisCacheInfrastructure implements ICacheInfrastructure {
                         ex);
                 throw new RuntimeException("Redis cache update failed", ex);
             }
-        });
+        }, executor);
     }
 
     @Override
@@ -233,7 +251,7 @@ public final class RedisCacheInfrastructure implements ICacheInfrastructure {
                 LOGGER.log(Level.SEVERE, "Redis cache remove failed. CacheId=[" + id + "]", ex);
                 throw new RuntimeException("Redis cache remove failed", ex);
             }
-        });
+        }, executor);
     }
 
     @Override
@@ -256,7 +274,7 @@ public final class RedisCacheInfrastructure implements ICacheInfrastructure {
                 LOGGER.log(Level.SEVERE, "Redis cache exists check failed. CacheId=[" + id + "]", ex);
                 throw new RuntimeException("Redis cache exists check failed", ex);
             }
-        });
+        }, executor);
     }
 
     // --- Helpers privados ---

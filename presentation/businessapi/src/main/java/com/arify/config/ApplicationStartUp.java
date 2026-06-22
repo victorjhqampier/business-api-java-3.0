@@ -2,6 +2,8 @@ package com.arify.config;
 
 import com.arify.application.ports.ExamplePort;
 import com.arify.application.usecases.exampleusecase.ExampleUseCase;
+import com.arify.domain.containers.cachelibraryservice.CacheLibraryService;
+import com.arify.domain.containers.cachelibraryservice.ICacheInfrastructure;
 import com.arify.domain.interfaces.IFakeApiInfrastructure;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.inject.Produces;
@@ -15,8 +17,18 @@ public class ApplicationStartUp {
 
     @Produces
     @ApplicationScoped
-    public ExamplePort exampleUseCase(IFakeApiInfrastructure fakeApiInfrastructure, @Named("virtualThreadExecutor") ExecutorService virtualThreadExecutor) {
+    public CacheLibraryService cacheLibraryService(ICacheInfrastructure cacheInfrastructure) {
+        LOGGER.info("services.AddSingleton<CacheLibraryService>()");
+        return new CacheLibraryService(cacheInfrastructure);
+    }
+
+    @Produces
+    @ApplicationScoped
+    public ExamplePort exampleUseCase(
+            IFakeApiInfrastructure fakeApiInfrastructure, 
+            CacheLibraryService cacheLibraryService,
+            @Named("virtualThreadExecutor") ExecutorService virtualThreadExecutor) {
         LOGGER.info("services.AddSingleton<ExamplePort, ExampleUseCase>()");
-        return new ExampleUseCase(fakeApiInfrastructure, virtualThreadExecutor);
+        return new ExampleUseCase(fakeApiInfrastructure, cacheLibraryService, virtualThreadExecutor);
     }
 }

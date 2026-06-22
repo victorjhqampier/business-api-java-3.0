@@ -3,23 +3,8 @@ package com.arify.redisinfra;
 import redis.clients.jedis.DefaultJedisClientConfig;
 import redis.clients.jedis.HostAndPort;
 import redis.clients.jedis.JedisPooled;
-
 import java.util.logging.Logger;
 
-/**
- * Configuración e inicialización de la conexión Redis.
- * 
- * <p>Equivalente a {@code ConnectionMultiplexer.Connect(ConfigurationOptions)} en .NET.</p>
- * 
- * <p>Características de alto rendimiento:</p>
- * <ul>
- *   <li>Connection Timeout: 500ms (fail-fast)</li>
- *   <li>Socket Timeout: 500ms (operaciones síncronas/asíncronas)</li>
- *   <li>Connection Retry: 1 intento</li>
- *   <li>KeepAlive: 30 segundos</li>
- *   <li>SSL: Configurable</li>
- * </ul>
- */
 public final class RedisStarting {
     private static final Logger LOGGER = Logger.getLogger(RedisStarting.class.getName());
 
@@ -31,31 +16,18 @@ public final class RedisStarting {
         throw new UnsupportedOperationException("Utility class");
     }
 
-    /**
-     * Inicializa una conexión persistente a Redis con la configuración provista.
-     * 
-     * @param host Host de Redis (requerido).
-     * @param password Contraseña de Redis (requerido).
-     * @param database Número de base de datos Redis (0-15).
-     * @param ssl Si la conexión debe usar SSL/TLS.
-     * @param abortOnConnectFail Si debe lanzar excepción al fallar la conexión inicial.
-     * @return Instancia de {@link JedisPooled} configurada y lista para usar.
-     * @throws IllegalArgumentException Si los parámetros obligatorios son inválidos.
-     * @throws RuntimeException Si {@code abortOnConnectFail=true} y la conexión falla.
-     */
-    public static JedisPooled init(
-            String host,
-            String password,
-            int database,
-            boolean ssl,
-            boolean abortOnConnectFail) {
+    public static JedisPooled init() {
+        String host = System.getenv("REDISDATABASE_HOST");
+        String password = System.getenv("REDISDATABASE_PASSWD");
+        int database = Integer.parseInt(System.getenv("REDISDATABASE_DATABASE"));
+        boolean ssl = Boolean.parseBoolean(
+                System.getenv().getOrDefault("REDISDATABASE_SSL", "false")
+        );
+        boolean abortOnConnectFail = Boolean.parseBoolean(
+                System.getenv().getOrDefault("REDISDATABASE_ABORTONCONNECTFAIL", "false")
+        );
 
         validateConfiguration(host, password, database);
-
-        LOGGER.info(String.format(
-                "Initializing Redis connection: host=%s, database=%d, ssl=%b, abortOnConnectFail=%b",
-                host, database, ssl, abortOnConnectFail));
-
         HostAndPort hostAndPort = new HostAndPort(host, DEFAULT_REDIS_PORT);
 
         DefaultJedisClientConfig config = DefaultJedisClientConfig.builder()
