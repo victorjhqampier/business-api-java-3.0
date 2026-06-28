@@ -12,6 +12,7 @@ import java.util.concurrent.Executors;
 public class ThreadSetting {
     // Virtual Threads (Java 21) - Equivalente al .NET ThreadPool para I/O-bound
     @Produces
+    @ApplicationScoped
     @Named("virtualThreadExecutor")
     public ExecutorService virtualThreadExecutor() {
         /*LOGGER.info("services.AddSingleton<ExecutorService>(virtualThreadExecutor)");*/

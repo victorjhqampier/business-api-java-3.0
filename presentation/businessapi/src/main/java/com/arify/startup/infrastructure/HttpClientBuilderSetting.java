@@ -11,6 +11,7 @@ import java.util.concurrent.ExecutorService;
 @ApplicationScoped
 public class HttpClientBuilderSetting {
     @Produces
+    @ApplicationScoped
     public HttpClientConnector httpClientConnector(@Named("virtualThreadExecutor") ExecutorService virtualThreadExecutor) {
         /*LOGGER.info("services.AddSingleton<HttpClientConnector>()");*/
         return HttpClientStarting.init(virtualThreadExecutor);

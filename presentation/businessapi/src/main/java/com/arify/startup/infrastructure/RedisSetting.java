@@ -33,6 +33,7 @@ public class RedisSetting {
 
     // Redis Connection Pool - Equivalente a IConnectionMultiplexer en .NET
     @Produces
+    @ApplicationScoped
     public JedisPooled jedisPooled() {
         /*LOGGER.info("services.AddSingleton<JedisPooled>()");*/
         return RedisStarting.init(redisHost, redisPassword, redisDatabase, redisSsl);
@@ -40,12 +41,14 @@ public class RedisSetting {
 
     // ---- Dependency Injection Section ------
     @Produces
+    @ApplicationScoped
     public CacheLibraryService cacheLibraryService(ICacheInfrastructure cacheInfrastructure) {
         /*LOGGER.info("services.AddSingleton<CacheLibraryService>()");*/
         return new CacheLibraryService(cacheInfrastructure);
     }
 
     @Produces
+    @ApplicationScoped
     public ICacheInfrastructure cacheInfrastructure(JedisPooled jedisPooled, @Named("virtualThreadExecutor") ExecutorService virtualThreadExecutor) {
         /*LOGGER.info("services.AddSingleton<ICacheInfrastructure, RedisCacheInfrastructure>()");*/
         return new RedisCacheInfrastructure(jedisPooled, virtualThreadExecutor);

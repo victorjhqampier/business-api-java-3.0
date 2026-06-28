@@ -19,6 +19,7 @@ import java.util.concurrent.ExecutorService;
 public class ApplicationSetting {
 
     @Produces
+    @ApplicationScoped
     public ExamplePort exampleUseCase(
             IFakeApiInfrastructure fakeApiInfrastructure,
             CacheLibraryService cacheLibraryService,
@@ -29,6 +30,7 @@ public class ApplicationSetting {
     }
 
     @Produces
+    @ApplicationScoped
     public ExampleCachePort exampleCacheUseCase(
             IFakeApiInfrastructure fakeApiInfrastructure,
             ICacheInfrastructure redisProvider,
@@ -39,6 +41,7 @@ public class ApplicationSetting {
     }
 
     @Produces
+    @ApplicationScoped
     public ExampleIdempotencyPort exampleIdempotencyUseCase(
             IFakeApiInfrastructure fakeApiInfrastructure,
             CacheLibraryService cacheLibraryService,
