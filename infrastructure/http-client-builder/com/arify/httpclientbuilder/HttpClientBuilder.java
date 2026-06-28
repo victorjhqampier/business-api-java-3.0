@@ -3,10 +3,12 @@ package com.arify.httpclientbuilder;
 import com.arify.domain.commons.CancellationReason;
 import com.arify.domain.commons.CancellationToken;
 import com.arify.domain.containers.memoryevents.MicroserviceCallMemoryQueue;
-import com.arify.httpclientbuilder.entities.HttpResponseEntity;
 import com.arify.domain.entities.MicroserviceCallTraceEntity;
+import com.arify.httpclientbuilder.entities.HttpResponseEntity;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.net.URLEncoder;
+import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.OffsetDateTime;
@@ -15,13 +17,16 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
-import java.util.logging.Level;
-import java.util.logging.Logger;
-import java.util.stream.Collectors;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.TimeoutException;
 
 public class HttpClientBuilder {
     private static final int MAX_TRACE_PAYLOAD_LENGTH = 4096;
-    private static final Logger LOGGER = Logger.getLogger(HttpClientBuilder.class.getName());
+    private static final int STATUS_OK = 200;
+    private static final int STATUS_REQUEST_TIMEOUT = 408;
+    private static final int STATUS_CLIENT_CLOSED_REQUEST = 499;
+    private static final int STATUS_INTERNAL_SERVER_ERROR = 500;
+    private static final int STATUS_SERVICE_UNAVAILABLE = 503;
 
     private final HttpClientConnector apiClient;
     private final OffsetDateTime startDatetime;
@@ -37,7 +42,7 @@ public class HttpClientBuilder {
     private String keyword;
     private Duration timeout;
 
-    public HttpClientBuilder(HttpClientConnector apiClient, Logger logger) {
+    public HttpClientBuilder(HttpClientConnector apiClient) {
         this.apiClient = apiClient;
         this.startDatetime = OffsetDateTime.now();
         this.baseUrl = "";
@@ -137,93 +142,149 @@ public class HttpClientBuilder {
         return send("PUT", body, cancellationToken);
     }
 
-    public void close() {
-        apiClient.close();
+    public CompletableFuture<HttpResponseEntity> delete() {
+        return send("DELETE", null);
     }
 
-    public String buildFinalUrl() {
-        String path = baseUrl + "/" + endpoint;
-
-        for (Map.Entry<String, String> entry : pathParams.entrySet()) {
-            String placeholder = "{" + entry.getKey() + "}";
-            if (!path.contains(placeholder)) {
-                throw new IllegalArgumentException(
-                        String.format("Path param '%s' no tiene placeholder en endpoint. Use '{%s}' o envíelo como query param.",
-                                entry.getKey(), entry.getKey()));
-            }
-            path = path.replace(placeholder, URLEncoder.encode(entry.getValue(), StandardCharsets.UTF_8));
-        }
-
-        return path;
-    }
-
-    public void ensureDefaultHeaders() {
-        if (headers.isEmpty()) {
-            headers.put("Content-Type", "application/json");
-        }
+    public CompletableFuture<HttpResponseEntity> delete(CancellationToken cancellationToken) {
+        return send("DELETE", null, cancellationToken);
     }
 
     public CompletableFuture<HttpResponseEntity> send(String method, Map<String, Object> body) {
         return send(method, body, null);
     }
 
-    // Retorna CompletableFuture sin bloquear, permitiendo composición asíncrona.
-    // Equivalente a retornar Task<HttpResponseMessage> en C#.
     public CompletableFuture<HttpResponseEntity> send(String method, Map<String, Object> body, CancellationToken cancellationToken) {
-        ensureDefaultHeaders();
-        String finalUrl = buildFinalUrl();
+        headers.putIfAbsent("Content-Type", "application/json");
+
+        String finalUrl;
+        try {
+            String path = baseUrl + "/" + endpoint;
+            for (Map.Entry<String, String> entry : pathParams.entrySet()) {
+                String placeholder = "{" + entry.getKey() + "}";
+                if (!path.contains(placeholder)) {
+                    throw new IllegalArgumentException(
+                            String.format("Path param '%s' no tiene placeholder en endpoint. Use '{%s}' o envíelo como query param.",
+                                    entry.getKey(), entry.getKey()));
+                }
+                path = path.replace(placeholder, URLEncoder.encode(entry.getValue(), StandardCharsets.UTF_8));
+            }
+            finalUrl = apiClient.buildUrlWithParams(path, query.isEmpty() ? null : query);
+        } catch (Exception exception) {
+            HttpResponseEntity response = errorResponse("", STATUS_INTERNAL_SERVER_ERROR, exception);
+            captureMemoryEvent(method, "", body, response, exception);
+            return CompletableFuture.completedFuture(response);
+        }
 
         if (cancellationToken != null && cancellationToken.isCancellationRequested()) {
-            return CompletableFuture.failedFuture(new CancellationException("HTTP request cancelled before dispatch."));
+            HttpResponseEntity response = errorResponse(finalUrl, cancellationStatus(cancellationToken),
+                    new CancellationException("HTTP request cancelled before dispatch."));
+            captureMemoryEvent(method, finalUrl, body, response, null);
+            return CompletableFuture.completedFuture(response);
         }
 
         return apiClient.requestAsync(
                         method,
                         finalUrl,
                         body,
-                        query.isEmpty() ? null : query,
+                        null,
                         headers.isEmpty() ? null : headers,
                         timeout,
                         cancellationToken)
-                .whenComplete((response, throwable) -> {
-                    if (throwable != null) {
-                        // Capturar traza de error
-                        Throwable cause = throwable instanceof java.util.concurrent.CompletionException
-                                ? throwable.getCause()
-                                : throwable;
-
-                        int statusCode = cancellationStatusCode(cancellationToken);
-                        
-                        LOGGER.log(Level.WARNING, InfrastructureLogger.format(
-                                "WARNING",
-                                cause.getMessage(),
-                                null,
-                                "{\"operation\":\"HttpClientBuilder.send\",\"method\":\"" + method + "\",\"url\":\"" + finalUrl + "\"}",
-                                "\"" + cause + "\""));
-
-                        captureErrorTrace(method, body, cause.getMessage(), statusCode);
-                    } else {
-                        // Capturar traza exitosa
-                        captureCompleteTrace(method, body, response);
+                .handle((response, throwable) -> {
+                    if (throwable == null) {
+                        HttpResponseEntity safeResponse = response.url() == null || response.url().isBlank()
+                                ? new HttpResponseEntity(response.statusCode(), response.body(), response.headers(), finalUrl)
+                                : response;
+                        captureMemoryEvent(method, finalUrl, body, safeResponse, null);
+                        return safeResponse;
                     }
+
+                    Throwable cause = throwable instanceof CompletionException && throwable.getCause() != null
+                            ? throwable.getCause()
+                            : throwable;
+                    HttpResponseEntity errorResponse = errorResponse(finalUrl, errorStatus(cause, cancellationToken), cause);
+                    captureMemoryEvent(method, finalUrl, body, errorResponse, cause);
+                    return errorResponse;
                 });
     }
 
-    public void resetMemoryState() {
-        this.memoryEnabled = false;
-        this.container = null;
-        this.operationName = "";
-        this.keyword = null;
+    private void captureMemoryEvent(String method, String requestUrl, Map<String, Object> body, HttpResponseEntity response, Throwable throwable) {
+        if (!memoryEnabled || container == null) {
+            return;
+        }
+
+        String responseBody = serializePayload(response.body());
+        String responseStatusCode = String.valueOf(response.statusCode());
+
+        MicroserviceCallTraceEntity traceEntity = new MicroserviceCallTraceEntity(
+                UUID.randomUUID().toString(),
+                headers.getOrDefault("message-identification", ""),
+                headers.getOrDefault("channel-identification", ""),
+                headers.getOrDefault("device-identification", ""),
+                keyword != null ? keyword : "",
+                method,
+                "BusinessAPI2.0",
+                operationName,
+                response.url() == null ? requestUrl : response.url(),
+                serializePayload(body),
+                startDatetime,
+                response.statusCode(),
+                responseBody,
+                OffsetDateTime.now());
+
+        container.tryPush(traceEntity);
+
+        if (response.statusCode() != STATUS_OK) {
+            InfrastructureLogger.logMemoryEvent(
+                    method,
+                    response.url() == null ? requestUrl : response.url(),
+                    serializePayload(headers),
+                    serializePayload(body),
+                    responseBody,
+                    responseStatusCode,
+                    throwable == null ? null : throwable.toString());
+        }
     }
 
-    public String serializePayload(Object payload) {
+    private HttpResponseEntity errorResponse(String finalUrl, int statusCode, Throwable throwable) {
+        ObjectNode body = HttpClientConnector.getObjectMapper().createObjectNode();
+        body.put("error", throwable == null || throwable.getMessage() == null ? "HTTP request failed" : throwable.getMessage());
+        return new HttpResponseEntity(statusCode, body, Map.of(), finalUrl == null ? "" : finalUrl);
+    }
+
+    private int errorStatus(Throwable throwable, CancellationToken cancellationToken) {
+        if (cancellationToken != null && cancellationToken.isCancellationRequested()) {
+            return cancellationStatus(cancellationToken);
+        }
+
+        Throwable current = throwable;
+        while (current != null) {
+            if (current instanceof CancellationException) {
+                return STATUS_CLIENT_CLOSED_REQUEST;
+            }
+            if (current instanceof TimeoutException || current instanceof HttpTimeoutException) {
+                return STATUS_REQUEST_TIMEOUT;
+            }
+            current = current.getCause();
+        }
+
+        return STATUS_SERVICE_UNAVAILABLE;
+    }
+
+    private int cancellationStatus(CancellationToken cancellationToken) {
+        return cancellationToken.cancellationReason()
+                .map(reason -> reason == CancellationReason.TIMEOUT ? STATUS_REQUEST_TIMEOUT : STATUS_CLIENT_CLOSED_REQUEST)
+                .orElse(STATUS_CLIENT_CLOSED_REQUEST);
+    }
+
+    private String serializePayload(Object payload) {
         if (payload == null) {
             return null;
         }
 
         String serialized;
         try {
-            // JsonNode se serializa directamente con Jackson
             serialized = HttpClientConnector.getObjectMapper().writeValueAsString(payload);
         } catch (JsonProcessingException exception) {
             serialized = payload.toString();
@@ -234,108 +295,5 @@ public class HttpClientBuilder {
         }
 
         return serialized.substring(0, MAX_TRACE_PAYLOAD_LENGTH) + "...[truncated]";
-    }
-
-    public void captureCompleteTrace(String method, Map<String, Object> body, HttpResponseEntity response) {
-        if (!memoryEnabled || container == null) {
-            return;
-        }
-
-        // El body del response ahora es JsonNode, serializamos si no es null
-        String responseBody = null;
-        if (response.body() != null && !response.body().isNull()) {
-            responseBody = serializePayload(response.body());
-        }
-
-        MicroserviceCallTraceEntity traceEntity = new MicroserviceCallTraceEntity(
-                UUID.randomUUID().toString(),
-                headers.getOrDefault("message-identification", ""),
-                headers.getOrDefault("channel-identification", ""),
-                headers.getOrDefault("device-identification", ""),
-                keyword != null ? keyword : "",
-                method,
-                "BusinessAPI2.0",
-                operationName,
-                response.url(),
-                serializePayload(body),
-                startDatetime,
-                response.statusCode(),
-                responseBody,
-                OffsetDateTime.now());
-
-        if (!container.tryPush(traceEntity)) {
-            LOGGER.log(Level.WARNING, InfrastructureLogger.format(
-                    "WARNING",
-                    "Trace dropped - queue full",
-                    null,
-                    String.format("{\"capacity\":%d,\"length\":%d,\"operation\":\"%s\",\"url\":\"%s\"}",
-                            container.capacity(), container.approxLength(), operationName, response.url()),
-                    "null"));
-        }
-    }
-
-    public void captureErrorTrace(String method, Map<String, Object> body, String errorMessage) {
-        captureErrorTrace(method, body, errorMessage, 408);
-    }
-
-    public void captureErrorTrace(String method, Map<String, Object> body, String errorMessage, int statusCode) {
-        if (!memoryEnabled || container == null) {
-            return;
-        }
-
-        String requestUrl = buildFinalUrl();
-        if (!query.isEmpty()) {
-            String queryString = query.entrySet().stream()
-                    .map(entry -> URLEncoder.encode(entry.getKey(), StandardCharsets.UTF_8)
-                            + "="
-                            + URLEncoder.encode(entry.getValue(), StandardCharsets.UTF_8))
-                    .collect(Collectors.joining("&"));
-            requestUrl = requestUrl + "?" + queryString;
-        }
-
-        String errorPayload;
-        try {
-            Map<String, String> errorMap = new HashMap<>();
-            errorMap.put("error", errorMessage);
-            errorPayload = HttpClientConnector.getObjectMapper().writeValueAsString(errorMap);
-        } catch (JsonProcessingException exception) {
-            errorPayload = "{\"error\":\"" + errorMessage + "\"}";
-        }
-
-        MicroserviceCallTraceEntity traceEntity = new MicroserviceCallTraceEntity(
-                UUID.randomUUID().toString(),
-                headers.getOrDefault("message-identification", ""),
-                headers.getOrDefault("channel-identification", ""),
-                headers.getOrDefault("device-identification", ""),
-                keyword != null ? keyword : "",
-                method,
-                "BusinessAPI2.0",
-                operationName,
-                requestUrl,
-                serializePayload(body),
-                startDatetime,
-                statusCode,
-                errorPayload,
-                OffsetDateTime.now());
-
-        if (!container.tryPush(traceEntity)) {
-            LOGGER.log(Level.WARNING, InfrastructureLogger.format(
-                    "WARNING",
-                    "Trace dropped - queue full",
-                    null,
-                    String.format("{\"capacity\":%d,\"length\":%d,\"operation\":\"%s\",\"url\":\"%s\"}",
-                            container.capacity(), container.approxLength(), operationName, requestUrl),
-                    "null"));
-        }
-    }
-
-    private int cancellationStatusCode(CancellationToken cancellationToken) {
-        if (cancellationToken == null) {
-            return 408;
-        }
-
-        return cancellationToken.cancellationReason()
-                .map(reason -> reason == CancellationReason.TIMEOUT ? 408 : 499)
-                .orElse(408);
     }
 }

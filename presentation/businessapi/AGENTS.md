@@ -6,8 +6,11 @@ Capa de presentación: controladores REST, handlers, helpers y **Composition Roo
 
 ```
 src/main/java/com/arify/
-├── config/
-│   └── AppConfiguration.java      # Composition Root (wiring CDI)
+├── config/                        # Composition Root (4 startup classes)
+│   ├── GlobalStartUp.java         # Technical resources (ExecutorService, HttpClient, Jedis, MemoryQueue)
+│   ├── InfrastructureStartUp.java # Domain adapters (FakeApiCommand, RedisCacheInfrastructure)
+│   ├── ApplicationStartUp.java    # Use cases and services (CacheLibraryService, ExampleUseCase)
+│   └── PresentationStartUp.java   # Lifecycle hooks (background listeners, startup/shutdown)
 ├── controllers/
 │   └── nonbianexample/
 │       └── NoBianExampleController.java
@@ -25,47 +28,18 @@ src/test/java/
     └── [Tests unitarios e integración]
 ```
 
-## Composition Root (AppConfiguration)
+## Composition Root (4 startup classes)
 
-**Regla de oro**: El wiring de dependencias debe hacerse **exclusivamente** en `AppConfiguration.java`. Aquí se decide qué implementaciones concretas usar y cómo construir los casos de uso.
+El wiring está dividido en 4 clases en `com.arify.config/`:
 
-### Patrón obligatorio:
+| Clase | Responsabilidad |
+|-------|---------------|
+| `GlobalStartUp` | Recursos técnicos (ExecutorService, HttpClientConnector, JedisPooled, MicroserviceCallMemoryQueue) |
+| `InfrastructureStartUp` | Adaptadores de dominio (FakeApiCommand, RedisCacheInfrastructure) |
+| `ApplicationStartUp` | Casos de uso y servicios (CacheLibraryService, ExampleUseCase) |
+| `PresentationStartUp` | Lifecycle hooks (MicroserviceCallMemoryListener, startup/shutdown) |
 
-```java
-@ApplicationScoped
-public class AppConfiguration {
-    
-    // 1. Crear singletons de infraestructura
-    @Produces
-    @ApplicationScoped
-    public HttpClientConnector httpClientConnector() {
-        return new HttpClientConnector(Duration.ofSeconds(5), Duration.ofSeconds(1));
-    }
-    
-    // 2. Virtual Thread Executor (Java 21 nativo)
-    @Produces
-    @ApplicationScoped
-    @Named("virtualThreadExecutor")
-    public ExecutorService virtualThreadExecutor() {
-        return Executors.newVirtualThreadPerTaskExecutor();
-    }
-    
-    // 3. Lifecycle management
-    public void shutdownVirtualThreadExecutor(
-            @Disposes @Named("virtualThreadExecutor") ExecutorService executor) {
-        executor.shutdown();
-    }
-    
-    // 4. Casos de uso (inyectar dependencias)
-    @Produces
-    @ApplicationScoped
-    public ExamplePort exampleUseCase(
-            IFakeApiInfrastructure fakeApiInfrastructure,
-            @Named("virtualThreadExecutor") ExecutorService executor) {
-        return new ExampleUseCase(fakeApiInfrastructure, executor);
-    }
-}
-```
+Cada clase usa `@ApplicationScoped` + `@Produces` + `@Disposes`. Los recursos técnicos se crean en `GlobalStartUp`, los adaptadores de dominio en `InfrastructureStartUp`, y los casos de uso en `ApplicationStartUp`.
 
 ## Controladores REST
 

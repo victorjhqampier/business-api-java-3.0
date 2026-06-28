@@ -34,7 +34,7 @@ public interface ICacheInfrastructure {
      * @param cancellationToken Token de cancelación.
      * @return CompletableFuture con el registro o null si no existe/expiró.
      */
-    <T> CompletableFuture<CacheRecord<T>> getAsync(String id, CancellationToken cancellationToken);
+    <T> CompletableFuture<CacheRecord<T>> getAsync(String id, Class<T> type, CancellationToken cancellationToken);
 
     /**
      * Crea un registro solo si no existe (operación atómica).

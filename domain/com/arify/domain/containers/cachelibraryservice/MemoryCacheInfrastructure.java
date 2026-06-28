@@ -5,6 +5,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CancellationException;
 
 /**
  * Implementación de cache en memoria usando ConcurrentHashMap.
@@ -37,9 +38,9 @@ public final class MemoryCacheInfrastructure implements ICacheInfrastructure {
     }
 
     @Override
-    public <T> CompletableFuture<CacheRecord<T>> getAsync(String id, CancellationToken cancellationToken) {
+    public <T> CompletableFuture<CacheRecord<T>> getAsync(String id, Class<T> type, CancellationToken cancellationToken) {
         if (cancellationToken.isCancellationRequested()) {
-            return CompletableFuture.failedFuture(new RuntimeException("Operation cancelled"));
+            return CompletableFuture.failedFuture(new CancellationException("Operation cancelled"));
         }
         validateId(id);
 
@@ -53,13 +54,12 @@ public final class MemoryCacheInfrastructure implements ICacheInfrastructure {
             return CompletableFuture.completedFuture(null);
         }
 
-        // Validar que el tipo almacenado es compatible con T
-        if (entry.value != null && !isCompatibleType(entry.value)) {
+        if (entry.value != null && type != Object.class && !type.isInstance(entry.value)) {
             return CompletableFuture.completedFuture(null);
         }
 
         @SuppressWarnings("unchecked")
-        T typedValue = (T) entry.value;
+        T typedValue = entry.value == null ? null : (T) entry.value;
         CacheRecord<T> typedRecord = new CacheRecord<>(
                 entry.record.id(),
                 entry.record.status(),
@@ -77,7 +77,7 @@ public final class MemoryCacheInfrastructure implements ICacheInfrastructure {
             Duration ttl,
             CancellationToken cancellationToken) {
         if (cancellationToken.isCancellationRequested()) {
-            return CompletableFuture.failedFuture(new RuntimeException("Operation cancelled"));
+            return CompletableFuture.failedFuture(new CancellationException("Operation cancelled"));
         }
         validateRecord(record, ttl);
         ensureCapacity();
@@ -95,7 +95,7 @@ public final class MemoryCacheInfrastructure implements ICacheInfrastructure {
             Duration ttl,
             CancellationToken cancellationToken) {
         if (cancellationToken.isCancellationRequested()) {
-            return CompletableFuture.failedFuture(new RuntimeException("Operation cancelled"));
+            return CompletableFuture.failedFuture(new CancellationException("Operation cancelled"));
         }
         validateRecord(record, ttl);
 
@@ -134,7 +134,7 @@ public final class MemoryCacheInfrastructure implements ICacheInfrastructure {
     @Override
     public CompletableFuture<Boolean> removeAsync(String id, CancellationToken cancellationToken) {
         if (cancellationToken.isCancellationRequested()) {
-            return CompletableFuture.failedFuture(new RuntimeException("Operation cancelled"));
+            return CompletableFuture.failedFuture(new CancellationException("Operation cancelled"));
         }
         validateId(id);
         CacheEntry removed = records.remove(id);
@@ -144,7 +144,7 @@ public final class MemoryCacheInfrastructure implements ICacheInfrastructure {
     @Override
     public CompletableFuture<Boolean> existsAsync(String id, CancellationToken cancellationToken) {
         if (cancellationToken.isCancellationRequested()) {
-            return CompletableFuture.failedFuture(new RuntimeException("Operation cancelled"));
+            return CompletableFuture.failedFuture(new CancellationException("Operation cancelled"));
         }
         validateId(id);
 
@@ -200,12 +200,6 @@ public final class MemoryCacheInfrastructure implements ICacheInfrastructure {
                 record.createdAt(),
                 record.expireIn(),
                 record.ownerToken());
-    }
-
-    private boolean isCompatibleType(Object value) {
-        // En Java, debido a type erasure, esta validación es limitada.
-        // Retornamos true y dejamos que el cast genérico maneje la conversión.
-        return true;
     }
 
     private void validateRecord(CacheRecord<?> record, Duration ttl) {

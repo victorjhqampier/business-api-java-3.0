@@ -27,16 +27,7 @@ public final class RedisStarting {
         throw new UnsupportedOperationException("Utility class");
     }
 
-    public static JedisPooled init() {
-        String host = System.getenv("REDISDATABASE_HOST");
-        String password = System.getenv("REDISDATABASE_PASSWD");
-        int database = Integer.parseInt(System.getenv("REDISDATABASE_DATABASE"));
-        boolean ssl = Boolean.parseBoolean(
-                System.getenv().getOrDefault("REDISDATABASE_SSL", "false")
-        );
-        boolean abortOnConnectFail = Boolean.parseBoolean(
-                System.getenv().getOrDefault("REDISDATABASE_ABORTONCONNECTFAIL", "false")
-        );
+    public static JedisPooled init(String host, String password, int database, boolean ssl) {
 
         validateConfiguration(host, password, database);
         HostAndPort hostAndPort = new HostAndPort(host, DEFAULT_REDIS_PORT);
@@ -51,25 +42,14 @@ public final class RedisStarting {
 
         try {
             JedisPooled jedis = new JedisPooled(hostAndPort, config);
-            
             // Verificar conectividad inicial
             jedis.ping();
-            
             LOGGER.info("Redis connection established successfully");
             return jedis;
         } catch (Exception ex) {
-            String errorMsg = String.format(
-                    "Failed to connect to Redis. Host=%s, Database=%d, SSL=%b",
-                    host, database, ssl);
-            
-            if (abortOnConnectFail) {
-                LOGGER.severe(errorMsg + " - Application startup aborted.");
-                throw new RuntimeException(errorMsg, ex);
-            } else {
-                LOGGER.warning(errorMsg + " - Application will continue without Redis cache.");
-                // Retornar una instancia "dummy" o relanzar para manejo en capas superiores
-                throw new RuntimeException(errorMsg, ex);
-            }
+            String errorMsg = String.format("Failed to connect to Redis. Host=%s, Database=%d, SSL=%b", host, database, ssl);
+            LOGGER.severe(errorMsg + " - Application startup aborted.");
+            throw new RuntimeException(errorMsg, ex);
         }
     }
 

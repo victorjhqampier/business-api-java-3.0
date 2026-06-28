@@ -251,23 +251,40 @@ public final class CacheQueryBuilder {
             }
             return reserveAsync(ct).thenCompose(reserved -> {
                 if (!reserved) {
-                    return readRecordAsync(type, ct, false).thenApply(concurrent ->
-                            (concurrent != null && concurrent.status() == CacheStatus.CREATED) ? concurrent.cachedData() : null);
+                    return readRecordAsync(type, ct, false).thenCompose(concurrent -> {
+                        if (concurrent != null && concurrent.status() == CacheStatus.CREATED) {
+                            return CompletableFuture.completedFuture(concurrent.cachedData());
+                        }
+                        if (concurrent != null && (concurrent.status() == CacheStatus.STARTED || concurrent.status() == CacheStatus.CLOSED)) {
+                            return CompletableFuture.completedFuture(null);
+                        }
+                        return loadAndStoreAsync(loader, ct, false);
+                    });
                 }
-                if (loader == null) {
-                    return CompletableFuture.failedFuture(new IllegalStateException(
-                            "This cache strategy requires a deferred async loader"));
-                }
-                return loader.apply(ct).thenCompose(value -> {
-                    if (value == null) {
-                        return removeAsync(ct).thenApply(ignored -> null);
-                    }
-                    return tryCompleteAsync(value, ct).thenApply(ignored -> value);
-                }).exceptionally(ex -> {
-                    removeAsync(CancellationToken.withDefault()).join();
-                    throw (ex instanceof CompletionException) ? (CompletionException) ex : new CompletionException(ex);
-                });
+                return loadAndStoreAsync(loader, ct, true);
             });
+        });
+    }
+
+    private <T> CompletableFuture<T> loadAndStoreAsync(
+            Function<CancellationToken, CompletableFuture<T>> loader,
+            CancellationToken ct,
+            boolean reserved) {
+        if (loader == null) {
+            return CompletableFuture.failedFuture(new IllegalStateException(
+                    "This cache strategy requires a deferred async loader"));
+        }
+        return loader.apply(ct).thenCompose(value -> {
+            if (value == null) {
+                return removeAsync(ct).thenApply(ignored -> null);
+            }
+            CompletableFuture<Boolean> storeTask = reserved
+                    ? tryCompleteAsync(value, ct)
+                    : storeCreatedAsync(value, ct);
+            return storeTask.thenApply(ignored -> value);
+        }).exceptionally(ex -> {
+            removeAsync(CancellationToken.withDefault()).join();
+            throw (ex instanceof CompletionException) ? (CompletionException) ex : new CompletionException(ex);
         });
     }
 
@@ -322,7 +339,7 @@ public final class CacheQueryBuilder {
 
     private <T> CompletableFuture<CacheRecord<T>> readRecordAsync(Class<T> type, CancellationToken ct, boolean required) {
         return executeProviderAsync(
-                token -> provider.getAsync(id, token),
+                token -> provider.getAsync(id, type, token),
                 null,
                 ct,
                 required);

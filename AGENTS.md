@@ -2,179 +2,101 @@
 
 Java 21 + Quarkus 3.34.1 multi-module Maven project (`com.arify`).
 
-## Arquitectura
+## Modules
+
+Parent POM at `./pom.xml` defines 7 modules. Maven wrapper only at `./presentation/businessapi/mvnw`.
+
+| Module | Layout | Depends on |
+|--------|--------|-----------|
+| `domain` | flat (`sourceDirectory=${project.basedir}`) | — |
+| `application` | flat | `domain` |
+| `infrastructure/http-client-builder` | flat | `domain`, `jackson-databind` |
+| `infrastructure/fake-api-infra` | flat | `domain`, `http-client-builder` |
+| `infrastructure/redis-infrastructure` | flat | `domain`, `jedis`, `jackson-databind` |
+| `presentation/eventlistener` | flat | `domain`, Quarkus BOM |
+| `presentation/businessapi` | `src/main/java/` standard | `application`, all infra modules, Quarkus BOM |
+
+## Architecture
 
 ```
-domain → nada
+domain → (nothing)
 application → domain
-infrastructure/* → domain (y otros infra cuando aplique)
+infrastructure/* → domain (and other infra when needed)
 presentation/businessapi → application
 ```
 
-Regla central: `application` orquesta casos de uso y llama a **interfaces definidas en domain** que implementa `infrastructure`. `application/ports` contiene solo puertos de entrada que usa `presentation` para invocar casos de uso. En `domain` no se llaman ports; se llaman interfaces.
+- `application` orchestrates use cases via **domain interfaces** (`domain/interfaces/`). `infrastructure` implements them.
+- `application/ports/` = input ports consumed by `presentation`. Do not put output contracts there.
+- All use cases return `EasyResult<T>` (success/failure/empty). No exceptions for expected flows.
 
-6 modulos: `domain`, `application`, `infrastructure/fake-api-infra`, `infrastructure/http-client-builder`, `presentation/eventlistener`, `presentation/businessapi`.
+## Package vs file path quirk
 
-| Modulo | Layout | Dependencias Maven |
-|--------|--------|-------------------|
-| `domain` | `sourceDirectory=${project.basedir}` (flat, sin `src/main/java/`) | ninguna |
-| `application` | idem flat | `domain` |
-| `infrastructure/fake-api-infra` | idem flat | `domain`, otros infra necesarios |
-| `infrastructure/http-client-builder` | idem flat | `domain`, `jackson-databind` |
-| `presentation/eventlistener` | idem flat | `application` si necesita orquestacion; evitar depender directo de infra |
-| `presentation/businessapi` | `src/main/java/` estandar | `application`, Quarkus BOM; composition root puede incluir infra para wiring CDI |
+`domain/`, `application/`, `infrastructure/*/`, `presentation/eventlistener/` use `sourceDirectory=${project.basedir}` — no `src/main/java/`. Files at `infrastructure/fake-api-infra/com/arify/fakeapiinfra/` can declare `package com.arify.application`. **Do not "fix" this.** Do not move files or change packages.
 
-## Enfoque de rendimiento
-
-Estas APIs deben estar orientadas a cargas **data-intensive** en primer lugar y **processing-intensive** en segundo lugar. La prioridad es mover, validar, transformar y responder datos con baja latencia y bajo desperdicio de memoria; el trabajo CPU pesado se atiende despues y debe aislarse para no degradar el camino I/O.
-
-### Mandatos de Alto Rendimiento (OBLIGATORIOS)
-
-**1. Objetos Estáticos (Singletons)**
-- `Logger`: SIEMPRE `private static final Logger LOGGER = Logger.getLogger(...)`. Instanciarlo por request es un error de arquitectura.
-- `ObjectMapper` (Jackson): SIEMPRE `private static final ObjectMapper`. Registrar módulos (`JavaTimeModule`) una sola vez al inicializar.
-- Validadores (`AbstractValidator<T>`): SIEMPRE `private static final` o `@ApplicationScoped`. Nunca reconstruir reglas ni metadata por request.
-- HTTP Clients (`HttpClient`, `HttpClientConnector`): SIEMPRE `@ApplicationScoped` (Singleton CDI). No crear instancias nuevas por petición.
-- ExecutorService: SIEMPRE `@ApplicationScoped` con lifecycle management (`@Disposes` para shutdown limpio).
-
-**2. Protocolo de Hilos Virtuales (Java 21)**
-- **Presentation Layer**: Usar `@RunOnVirtualThread` en endpoints REST. Permite usar `.join()` de forma idiomática sin bloquear platform threads.
-- **Application Layer**: Recibir `ExecutorService` por constructor (inyectado desde Composition Root). Usar `CompletableFuture.*Async(..., executor)` para continuaciones. **PROHIBIDO** importar anotaciones Quarkus/Jakarta en esta capa.
-- **Composition Root** (`AppConfiguration`): Usar `Executors.newVirtualThreadPerTaskExecutor()` para crear el pool de hilos virtuales. Es la forma nativa de Java 21 para I/O-bound.
-- **Benefit**: Con el mismo hardware, pasar de cientos de conexiones simultáneas a decenas de miles. Los hilos virtuales son minúsculos (KB vs MB).
-
-**3. Hot Path (Rutas Calientes)**
-- **Loops vs Streams**: En métodos que transforman listas de errores de validación o payloads grandes, preferir loops tradicionales (`for`, `ArrayList.add()`) sobre `stream().map().toList()`. Esto minimiza la basura en el GC.
-- **Ejemplo Correcto**:
-  ```java
-  List<FieldErrorInternalModel> errors = new ArrayList<>(errorList.size());
-  for (ValidationResultAdapter error : errorList) {
-      errors.add(new FieldErrorInternalModel(error.code(), error.message(), error.field()));
-  }
-  ```
-- **Ejemplo Incorrecto** (en hot path):
-  ```java
-  List<FieldErrorInternalModel> errors = errorList.stream()
-      .map(error -> new FieldErrorInternalModel(...))
-      .toList(); // Crea intermediarios innecesarios
-  ```
-
-**4. Scopes CDI**
-- Controllers: `@ApplicationScoped` (Singleton). Solo si el controller NO tiene estado mutable entre requests.
-- Use Cases: Inyectar como `@ApplicationScoped`. Los casos de uso no deben tener estado que varíe entre peticiones.
-- Handlers/Helpers que NO tienen dependencias inyectables: Clase con constructor privado y métodos `static`.
-
-**5. Manejo de Excepciones (Arquitectura de Flujo)**
-- **PROHIBIDO usar `try-catch` en `infrastructure` y `application`**: Las excepciones deben fluir naturalmente hacia `presentation`.
-- **`infrastructure`**: NO atrapar `JsonProcessingException`, `IOException`, `TimeoutException` ni errores de parsing/HTTP. Dejarlas propagarse.
-- **`application`**: NO atrapar excepciones de infraestructura. Solo validar datos de negocio con `EasyResult`.
-- **`presentation`**: Única capa autorizada para `try-catch`. Los controladores capturan todas las excepciones (timeout, parsing, validación, infraestructura) y las mapean a respuestas HTTP apropiadas.
-- **Beneficio**: Arquitectura clara de responsabilidades. Infraestructura y aplicación se mantienen puras, sin lógica de manejo de errores que oscurezca el happy path. La presentación actúa como "safety net" global.
-- **Excepción a la regla**: Solo si una excepción debe enriquecerse con contexto específico de infraestructura antes de propagarse (ej: agregar traceId), se permite `catch + throw` (re-throw con contexto adicional), NUNCA `catch` silencioso o con retorno de valor por defecto.
-
-### Reglas de Medición
-
-- Medir antes de concluir. Una medicion de Postman incluye cliente, red local, dispatch HTTP, Jackson, logs, trazas, warmup y respuesta; no equivale a validacion pura.
-- Medir endpoints en modo jar o produccion, despues de warmup. La primera request puede incluir lazy init/JIT y no representa latencia estable.
-- Para micro-costos usar mediciones dentro de JVM o JMH cuando aplique; para endpoints usar `curl`, `wrk`, `hey`, `ab` u otra herramienta repetible.
-- Optimizar primero el camino data-intensive: serializacion/deserializacion, HTTP clients, ObjectMapper, validadores, trazas, colas, buffers, logs y asignaciones por request.
-- Los flujos esperados como 4xx/empty/no-content no deben escribir logs `warning`/`severe` por request; usar `fine/debug` o metricas.
-- Para I/O-bound usar virtual threads en presentation/background services cuando aplique; para CPU-bound usar ejecutores acotados y no mezclar trabajo CPU pesado con el loop de request.
-- Mantener backpressure: colas con capacidad, timeouts, cancelacion y limites de payload son parte del diseno data-intensive.
-
-### Hallazgo Base de Rendimiento (Verificado)
-
-- El endpoint `POST /business-api-b/v1/no-bian/{customer_id}/create` fue medido en jar local con payload invalido 422. La primera request fria rondo ~97 ms por warmup/lazy init; requests calientes quedaron alrededor de 2.35-2.70 ms, con un outlier de 4.89 ms.
-- La validacion pura de campos es **sub-milisegundo**; una lectura de 32-53 ms en Postman normalmente apunta a medicion de request completa, dev mode, warmup, logging, trazas o asignaciones innecesarias.
-- Se corrigio el camino caliente para reutilizar validadores, evitar reconstruir reglas/reflection por request, reutilizar `ObjectMapper` de trazas y bajar logs esperados de validacion a nivel fino.
-- **Resultado**: Con hilos virtuales + singletons + hot path optimizado, el sistema puede manejar 10-100x más tráfico concurrente con el mismo hardware que un diseño tradicional con platform threads.
-
-## Quirk: package vs file path
-
-`infrastructure/*`, `presentation/eventlistener`, `domain/` y `application/` usan `sourceDirectory=${project.basedir}`. Archivos bajo `infrastructure/fake-api-infra/com/arify/fakeapiinfra/` declaran `package com.arify.application` o `com.arify.domain.entities`. **No corregir.** No mover archivos ni cambiar packages sin decision explicita.
-
-## Comandos
+## Commands
 
 ```bash
-# Maven wrapper (solo aqui existe)
-./presentation/businessapi/mvnw
-
-# Build completo (salta ITs)
+# Build all (skip ITs)
 ./presentation/businessapi/mvnw -f pom.xml clean install -DskipITs=true
 
 # Dev mode (hot reload)
 ./presentation/businessapi/mvnw -f presentation/businessapi/pom.xml quarkus:dev
 
-# Package jar
+# Package + run jar
 ./presentation/businessapi/mvnw -f pom.xml -pl presentation/businessapi -am clean package
 java -jar presentation/businessapi/target/quarkus-app/quarkus-run.jar
 
-# Tests unitarios (surefire, @QuarkusTest)
+# Unit tests (surefire)
 mvn test
 
-# Tests de integracion (failsafe, @QuarkusIntegrationTest)
+# Integration tests (failsafe) — skipped by default
 mvn verify -DskipITs=false
 
-# Test especifico
+# Single test
 mvn test -Dtest=HealthControllerTest
 
-# Native image (GraalVM) — activa perfil native, fuerza ITs
+# Native image (GraalVM)
 mvn package -Pnative -DskipTests
 ```
 
 ## Test quirks
 
-- Solos tests existen en `presentation/businessapi/src/test/`.
-- `@QuarkusIntegrationTest` (HealthControllerIT) **extiende** `@QuarkusTest` (HealthControllerTest) con cuerpo vacio — hereda todos los metodos. Patron a replicar.
-- ITs se saltan por defecto (`skipITs=true`). Ejecutar con `mvn verify -DskipITs=false`.
+- All tests in `presentation/businessapi/src/test/`.
+- `@QuarkusIntegrationTest` (e.g. `HealthControllerIT`) **extends** `@QuarkusTest` (e.g. `HealthControllerTest`) with empty body — inherits all test methods. Replicate this pattern.
+- ITs skip by default (`skipITs=true`). Run with `mvn verify -DskipITs=false`.
 
-## Convenciones
+## Conventions (mandatory)
 
-- DTOs, entidades de dominio y adapters: **Java records**.
-- Casos de uso retornan `EasyResult<T>` (success/failure/empty). Flujos esperados usan `EasyResult`, no excepciones.
-- Puertos de entrada: interfaces en `application/ports/`. Casos de uso las implementan y `presentation` las consume.
-- Interfaces de dominio: contratos en `domain/interfaces/` que `application` consume e `infrastructure` implementa. No llamarlas ports.
-- Validacion: `FluentValidationExecutor`.
-- **Validadores**: SIEMPRE reutilizar instancias `private static final` en casos de uso o `@ApplicationScoped` cuando sea necesario. Ejemplo:
-  ```java
-  private static final TraceIdentifierAdapterValidator TRACE_IDENTIFIER_VALIDATOR = new TraceIdentifierAdapterValidator();
-  // Uso:
-  List<ValidationResultAdapter> errors = FluentValidationExecutor.execute(trace, TRACE_IDENTIFIER_VALIDATOR);
-  ```
-- **Integración con CacheLibraryService**: 
-  - Usar tipos concretos en `resolveAsync(..., ConcreteType.class, ...)` para evitar type erasure y casts manuales.
-  - Manejar `Optional` de infraestructura inline: `loader -> infra.callAsync(...).thenApply(opt -> opt.orElse(null))`.
-  - Evitar clases "Support" o métodos privados para transformaciones simples; mantener el caso de uso autocontenido.
-- **Virtual threads**: 
-  - En `presentation`: usar `@RunOnVirtualThread` en endpoints REST.
-  - En `application`: usar solo Java nativo (`ExecutorService` inyectado, `CompletableFuture.*Async(..., executor)`).
-  - **PROHIBIDO**: importar anotaciones Quarkus/Jakarta en `application` o `domain`.
-- **Loggers**: SIEMPRE `private static final Logger LOGGER = Logger.getLogger(...)` para minimizar overhead.
-- Java 21 validado por `maven-enforcer-plugin`.
-- CORS: solo `arify.com`, metodos GET,POST,PUT,DELETE.
-- Dockerfile usa `presentation/businessapi` (lowercase), compatible con filesystems case-sensitive.
+- **DTOs, domain entities, adapters**: Java records.
+- **FluentValidationExecutor**: validators are `private static final` or `@ApplicationScoped` — never reconstructed per request.
+- **Loggers**: `private static final Logger LOGGER = Logger.getLogger(...)` — never per-instance.
+- **ObjectMapper**: `private static final` with `JavaTimeModule` registered once.
+- **Virtual threads**: `@RunOnVirtualThread` on REST endpoints (presentation only). `application` receives `ExecutorService` by constructor, uses `CompletableFuture.*Async(..., executor)`. **Prohibited**: Quarkus/Jakarta annotations in `application` or `domain`.
+- **No try-catch in `infrastructure` or `application`**: Exceptions flow to `presentation` which maps them to HTTP. Exception: catch + re-throw with extra context (e.g. traceId) allowed in infrastructure.
+- **Hot path**: Prefer `for` loops over `stream().map().toList()` when transforming validation error lists or large payloads.
+- **Controllers**: `@ApplicationScoped`, stateless.
 
-## Endpoints base
+## Composition Root (4 classes)
 
-| Ruta | Descripcion |
-|------|-------------|
-| `GET /` | Info del servicio |
-| `GET /ping` | Ping/pong |
-| `GET /health` | Health chequeado |
-| `GET /health/live` | Liveness |
-| `GET /health/ready` | Readiness |
-| `/q/swagger-ui` | Swagger UI |
-| `/openapi` | OpenAPI spec |
+Actual wiring is in `presentation/businessapi/src/main/java/com/arify/config/`:
 
-## Capas locales
+| Class | Responsibility |
+|-------|---------------|
+| `GlobalStartUp` | Technical resources (ExecutorService, HttpClientConnector, JedisPooled, MemoryQueue) |
+| `InfrastructureStartUp` | Domain adapters (FakeApiCommand, RedisCacheInfrastructure) |
+| `ApplicationStartUp` | Use cases and services (CacheLibraryService, ExampleUseCase) |
+| `PresentationStartUp` | Lifecycle hooks (background listeners, startup/shutdown) |
 
-Si editas bajo `domain/` o `application/`, lee su `AGENTS.md` local — contienen reglas estrictas:
-- **domain**: entidades e interfaces puras, sin anotaciones ni dependencias de framework.
-- **application**: casos de uso, orquesta interfaces de `domain`, no conoce HTTP/infrastructure/presentation, prohibido llamar servicios externos directamente.
+## Per-module AGENTS.md
 
-## No modificar sin instruccion explicita
+Each module has its own `AGENTS.md` with stricter rules — read before editing:
+- `domain/AGENTS.md` — pure entities/interfaces, no framework annotations
+- `application/AGENTS.md` — use case rules, validation, executor usage patterns
+- `infrastructure/AGENTS.md` — wiring principles, `*Starting.java` factories, env var priority
+- `presentation/businessapi/AGENTS.md` — controller patterns, REST conventions
 
-- `.github/` (hooks de AI assistant)
-- `ConfigForIATools/**`, `docs/**`, `env/**` (si existen)
-- `opencode.json` (no existe aun en el repo)
-- Packages y sourceDirectory de modulos infrastructure
+## Do not modify
+
+- `.github/` — AI assistant hooks
+- `docs/` — reference Dockerfiles
+- Packages or `sourceDirectory` of infrastructure modules

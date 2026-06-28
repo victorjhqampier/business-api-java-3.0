@@ -18,6 +18,7 @@ import redis.clients.jedis.params.SetParams;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ForkJoinPool;
@@ -98,14 +99,13 @@ public final class RedisCacheInfrastructure implements ICacheInfrastructure {
     }
 
     @Override
-    public <T> CompletableFuture<CacheRecord<T>> getAsync(String id, CancellationToken cancellationToken) {
+    public <T> CompletableFuture<CacheRecord<T>> getAsync(String id, Class<T> type, CancellationToken cancellationToken) {
         return CompletableFuture.supplyAsync(() -> {
             validateId(id);
             if (cancellationToken.isCancellationRequested()) {
-                throw new RuntimeException("Operation cancelled");
+                throw new CancellationException("Operation cancelled");
             }
             throwIfRedisTemporarilyUnavailable(id, "get");
-            logDisconnected(id, "get");
 
             try {
                 String value = jedis.get(id);
@@ -125,11 +125,10 @@ public final class RedisCacheInfrastructure implements ICacheInfrastructure {
                     return null;
                 }
 
-                return toTypedRecord(record);
+                return toTypedRecord(record, type);
+            } catch (CancellationException ex) {
+                throw ex;
             } catch (Exception ex) {
-                if (ex instanceof RuntimeException && ex.getMessage() != null && ex.getMessage().contains("cancelled")) {
-                    throw (RuntimeException) ex;
-                }
                 markRedisTemporarilyUnavailable();
                 LOGGER.log(Level.SEVERE, "Redis cache get failed. CacheId=[" + id + "]", ex);
                 throw new RuntimeException("Redis cache get failed", ex);
@@ -142,14 +141,13 @@ public final class RedisCacheInfrastructure implements ICacheInfrastructure {
         return CompletableFuture.supplyAsync(() -> {
             validateRecord(record, ttl);
             if (cancellationToken.isCancellationRequested()) {
-                throw new RuntimeException("Operation cancelled");
+                throw new CancellationException("Operation cancelled");
             }
             throwIfRedisTemporarilyUnavailable(record.id(), "create");
-            logDisconnected(record.id(), "create");
 
             try {
                 String payload = OBJECT_MAPPER.writeValueAsString(toRedisRecord(record));
-                long ttlMillis = ttl.toMillis();
+                long ttlMillis = Math.max(1, ttl.toMillis());
                 
                 SetParams params = new SetParams().nx().px(ttlMillis);
                 String result = jedis.set(record.id(), payload, params);
@@ -158,10 +156,9 @@ public final class RedisCacheInfrastructure implements ICacheInfrastructure {
             } catch (JsonProcessingException ex) {
                 LOGGER.log(Level.SEVERE, "Redis cache serialization failed. CacheId=[" + record.id() + "]", ex);
                 throw new RuntimeException("Redis cache serialization failed", ex);
+            } catch (CancellationException ex) {
+                throw ex;
             } catch (Exception ex) {
-                if (ex instanceof RuntimeException && ex.getMessage() != null && ex.getMessage().contains("cancelled")) {
-                    throw (RuntimeException) ex;
-                }
                 markRedisTemporarilyUnavailable();
                 LOGGER.log(Level.SEVERE, "Redis cache create failed. CacheId=[" + record.id() + "] Status=[" + record.status() + "]", ex);
                 throw new RuntimeException("Redis cache create failed", ex);
@@ -179,10 +176,9 @@ public final class RedisCacheInfrastructure implements ICacheInfrastructure {
         return CompletableFuture.supplyAsync(() -> {
             validateRecord(record, ttl);
             if (cancellationToken.isCancellationRequested()) {
-                throw new RuntimeException("Operation cancelled");
+                throw new CancellationException("Operation cancelled");
             }
             throwIfRedisTemporarilyUnavailable(record.id(), "update");
-            logDisconnected(record.id(), "update");
 
             try {
                 if (!isAllowedTransition(expectedStatus, record.status())) {
@@ -214,10 +210,9 @@ public final class RedisCacheInfrastructure implements ICacheInfrastructure {
             } catch (JsonProcessingException ex) {
                 LOGGER.log(Level.SEVERE, "Redis cache serialization failed. CacheId=[" + record.id() + "]", ex);
                 throw new RuntimeException("Redis cache serialization failed", ex);
+            } catch (CancellationException ex) {
+                throw ex;
             } catch (Exception ex) {
-                if (ex instanceof RuntimeException && ex.getMessage() != null && ex.getMessage().contains("cancelled")) {
-                    throw (RuntimeException) ex;
-                }
                 markRedisTemporarilyUnavailable();
                 LOGGER.log(Level.SEVERE,
                         "Redis cache update failed. CacheId=[" + record.id() + "] ExpectedStatus=[" + expectedStatus + "] NewStatus=[" + record.status() + "]",
@@ -232,10 +227,9 @@ public final class RedisCacheInfrastructure implements ICacheInfrastructure {
         return CompletableFuture.supplyAsync(() -> {
             validateId(id);
             if (cancellationToken.isCancellationRequested()) {
-                throw new RuntimeException("Operation cancelled");
+                throw new CancellationException("Operation cancelled");
             }
             throwIfRedisTemporarilyUnavailable(id, "remove");
-            logDisconnected(id, "remove");
 
             try {
                 long removed = jedis.del(id);
@@ -243,10 +237,9 @@ public final class RedisCacheInfrastructure implements ICacheInfrastructure {
                     LOGGER.log(Level.WARNING, "Redis cache remove skipped because record was not found. CacheId=[{0}]", id);
                 }
                 return removed > 0;
+            } catch (CancellationException ex) {
+                throw ex;
             } catch (Exception ex) {
-                if (ex instanceof RuntimeException && ex.getMessage() != null && ex.getMessage().contains("cancelled")) {
-                    throw (RuntimeException) ex;
-                }
                 markRedisTemporarilyUnavailable();
                 LOGGER.log(Level.SEVERE, "Redis cache remove failed. CacheId=[" + id + "]", ex);
                 throw new RuntimeException("Redis cache remove failed", ex);
@@ -259,17 +252,15 @@ public final class RedisCacheInfrastructure implements ICacheInfrastructure {
         return CompletableFuture.supplyAsync(() -> {
             validateId(id);
             if (cancellationToken.isCancellationRequested()) {
-                throw new RuntimeException("Operation cancelled");
+                throw new CancellationException("Operation cancelled");
             }
             throwIfRedisTemporarilyUnavailable(id, "exists");
-            logDisconnected(id, "exists");
 
             try {
                 return jedis.exists(id);
+            } catch (CancellationException ex) {
+                throw ex;
             } catch (Exception ex) {
-                if (ex instanceof RuntimeException && ex.getMessage() != null && ex.getMessage().contains("cancelled")) {
-                    throw (RuntimeException) ex;
-                }
                 markRedisTemporarilyUnavailable();
                 LOGGER.log(Level.SEVERE, "Redis cache exists check failed. CacheId=[" + id + "]", ex);
                 throw new RuntimeException("Redis cache exists check failed", ex);
@@ -285,15 +276,6 @@ public final class RedisCacheInfrastructure implements ICacheInfrastructure {
         } catch (JsonProcessingException ex) {
             LOGGER.log(Level.WARNING, "Redis cache record has invalid JSON. CacheId=[" + id + "]", ex);
             return null;
-        }
-    }
-
-    private void logDisconnected(String id, String operation) {
-        try {
-            jedis.ping();
-        } catch (JedisConnectionException ex) {
-            LOGGER.log(Level.SEVERE, "Redis connection is not available. Operation=[{0}] CacheId=[{1}]",
-                    new Object[]{operation, id});
         }
     }
 
@@ -320,15 +302,15 @@ public final class RedisCacheInfrastructure implements ICacheInfrastructure {
     }
 
     @SuppressWarnings("unchecked")
-    private <T> CacheRecord<T> toTypedRecord(RedisCacheRecord record) {
+    private <T> CacheRecord<T> toTypedRecord(RedisCacheRecord record, Class<T> type) {
         T cachedData = null;
         if (record.cachedData != null && !record.cachedData.isNull()) {
             try {
-                cachedData = (T) OBJECT_MAPPER.treeToValue(record.cachedData, Object.class);
+                cachedData = OBJECT_MAPPER.treeToValue(record.cachedData, type);
             } catch (JsonProcessingException ex) {
                 LOGGER.log(Level.WARNING,
-                        "Redis cache record payload could not be deserialized. CacheId=[{0}] Status=[{1}]",
-                        new Object[]{record.id, record.status});
+                        "Redis cache record payload could not be deserialized. CacheId=[{0}] Status=[{1}] TargetType=[{2}]",
+                        new Object[]{record.id, record.status, type.getSimpleName()});
                 return null;
             }
         }

@@ -10,10 +10,12 @@ import com.arify.application.ports.ExampleCachePort;
 import com.arify.domain.commons.CancellationToken;
 import com.arify.domain.containers.cachelibraryservice.CacheLibraryService;
 import com.arify.domain.containers.cachelibraryservice.CacheStrategy;
+import com.arify.domain.containers.cachelibraryservice.ICacheInfrastructure;
 import com.arify.domain.entities.FakeApiEntity;
 import com.arify.domain.interfaces.IFakeApiInfrastructure;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ThreadLocalRandom;
@@ -24,58 +26,52 @@ import java.util.concurrent.TimeUnit;
  * Sigue el patrón de ExampleUseCase.java y la referencia C# ExampleCacheCase.cs.
  */
 public class ExampleRedisUsecase implements ExampleCachePort {
-    private static final int VALIDATION_FAILED_STATUS = 422;
     private static final Duration CACHE_TTL = Duration.ofMinutes(10);
     private static final Duration CACHE_JITTER = Duration.ofMinutes(2);
-    private static final TraceIdentifierAdapterValidator TRACE_IDENTIFIER_VALIDATOR = new TraceIdentifierAdapterValidator();
 
-    private final IFakeApiInfrastructure fakeApi;
+    private final IFakeApiInfrastructure fakeApiQuery;
     private final CacheLibraryService cacheLibrary;
     private final ExecutorService executor;
 
-    public ExampleRedisUsecase(
-            IFakeApiInfrastructure fakeApi,
-            CacheLibraryService cacheLibrary,
-            ExecutorService executor) {
-        this.fakeApi = fakeApi;
-        this.cacheLibrary = cacheLibrary;
+    public ExampleRedisUsecase(IFakeApiInfrastructure fakeApiQuery, ICacheInfrastructure redisProvider, ExecutorService executor) {
+        this.fakeApiQuery = fakeApiQuery;
+        this.cacheLibrary = new CacheLibraryService(redisProvider);
         this.executor = executor;
     }
 
     @Override
-    public CompletableFuture<EasyResult<RetrieveExampleAdapter>> showExampleAsync(
-            TraceIdentifierAdapter header,
-            CancellationToken token) {
+    public CompletableFuture<EasyResult<RetrieveExampleAdapter>> showExampleAsync(TraceIdentifierAdapter header, CancellationToken token) {
         
         // 1. Validación de headers (Hot Path - Reutilizando validador estático)
-        List<ValidationResultAdapter> errors = FluentValidationExecutor.execute(header, TRACE_IDENTIFIER_VALIDATOR);
+        List<ValidationResultAdapter> errors = FluentValidationExecutor.execute(header, new TraceIdentifierAdapterValidator());
         if (!errors.isEmpty()) {
-            return CompletableFuture.completedFuture(EasyResult.failure(VALIDATION_FAILED_STATUS, errors));
+            return CompletableFuture.completedFuture(EasyResult.failure(422, errors));
         }
 
         // 2. Lógica de negocio (determinista para este ejemplo)
         int apiValue = ThreadLocalRandom.current().nextInt(1, 4);
         int productValue = ThreadLocalRandom.current().nextInt(1, 4);
 
+        var myConfig = Map.of(
+                "CACHE_KEY_A", "trx-a-" + header.channelIdentifier() + apiValue,
+                "CACHE_KEY_B", "trx-b-" + header.channelIdentifier() + productValue
+        );
+
         // 3. Resolución con Cache (Patrón Inline - Zero Allocation de helpers)
         // Usamos tipos concretos (FakeApiEntity.class) y manejamos el Optional inline.
-        CompletableFuture<FakeApiEntity> apiResultTask = cacheLibrary
-                .forKey("trx-" + header.channelIdentifier() + "-fake-api-title-" + apiValue)
+        CompletableFuture<FakeApiEntity> apiResultTask = cacheLibrary.forKey(myConfig.get("CACHE_KEY_A"))
                 .useStrategy(CacheStrategy.CACHE_THEN_SOURCE_AND_STORE)
                 .withTtl(CACHE_TTL, CACHE_JITTER)
                 .resolveAsync(
-                        cacheToken -> fakeApi.getUserAsync(apiValue, cacheToken)
-                                .thenApply(opt -> opt.orElse(null)),
+                        cacheToken -> fakeApiQuery.getUserAsync(apiValue, cacheToken).thenApply(opt -> opt.orElse(null)),
                         FakeApiEntity.class,
                         token);
 
-        CompletableFuture<FakeApiEntity> productResultTask = cacheLibrary
-                .forKey("trx-" + header.channelIdentifier() + "-fake-api-product-" + productValue)
+        CompletableFuture<FakeApiEntity> productResultTask = cacheLibrary.forKey(myConfig.get("CACHE_KEY_B"))
                 .useStrategy(CacheStrategy.CACHE_THEN_SOURCE_AND_STORE)
                 .withTtl(CACHE_TTL, CACHE_JITTER)
                 .resolveAsync(
-                        cacheToken -> fakeApi.getTitleAsync(productValue, cacheToken)
-                                .thenApply(opt -> opt.orElse(null)),
+                        cacheToken -> fakeApiQuery.getTitleAsync(productValue, cacheToken).thenApply(opt -> opt.orElse(null)),
                         FakeApiEntity.class,
                         token);
 
@@ -92,9 +88,10 @@ public class ExampleRedisUsecase implements ExampleCachePort {
                     }
 
                     // 5. Mapeo a Response DTO
-                    RetrieveExampleAdapter result = new RetrieveExampleAdapter(
+                    var result = new RetrieveExampleAdapter(
                             productResult.title(),
-                            apiResult.title());
+                            apiResult.title()
+                    );
 
                     return EasyResult.success(result);
                 }, executor);

@@ -2,7 +2,6 @@ package com.arify.httpclientbuilder;
 
 import java.time.Duration;
 import java.util.concurrent.ExecutorService;
-import java.util.logging.Logger;
 
 /* ********************************************************************************************************
  * Copyright © 2026 Arify Labs - All rights reserved.
@@ -16,8 +15,6 @@ import java.util.logging.Logger;
  **********************************************************************************************************/
 
 public final class HttpClientStarting {
-    private static final Logger LOGGER = Logger.getLogger(HttpClientStarting.class.getName());
-    
     private static final String DEFAULT_REQUEST_TIMEOUT_SECONDS = "5";
     private static final String DEFAULT_CONNECT_TIMEOUT_SECONDS = "1";
 
@@ -39,14 +36,10 @@ public final class HttpClientStarting {
         // Fallback a valores por defecto si no están en el environment
         if (requestTimeoutStr == null || requestTimeoutStr.isBlank()) {
             requestTimeoutStr = DEFAULT_REQUEST_TIMEOUT_SECONDS;
-            LOGGER.warning("HTTP_CLIENT_REQUEST_TIMEOUT not found in environment, using default: " 
-                    + DEFAULT_REQUEST_TIMEOUT_SECONDS + "s");
         }
 
         if (connectTimeoutStr == null || connectTimeoutStr.isBlank()) {
             connectTimeoutStr = DEFAULT_CONNECT_TIMEOUT_SECONDS;
-            LOGGER.warning("HTTP_CLIENT_CONNECT_TIMEOUT not found in environment, using default: " 
-                    + DEFAULT_CONNECT_TIMEOUT_SECONDS + "s");
         }
 
         Duration requestTimeout;
@@ -55,22 +48,14 @@ public final class HttpClientStarting {
         try {
             requestTimeout = Duration.ofSeconds(Long.parseLong(requestTimeoutStr));
         } catch (NumberFormatException ex) {
-            LOGGER.warning("HTTP_CLIENT_REQUEST_TIMEOUT invalid format, using default: " 
-                    + DEFAULT_REQUEST_TIMEOUT_SECONDS + "s");
             requestTimeout = Duration.ofSeconds(Long.parseLong(DEFAULT_REQUEST_TIMEOUT_SECONDS));
         }
 
         try {
             connectTimeout = Duration.ofSeconds(Long.parseLong(connectTimeoutStr));
         } catch (NumberFormatException ex) {
-            LOGGER.warning("HTTP_CLIENT_CONNECT_TIMEOUT invalid format, using default: " 
-                    + DEFAULT_CONNECT_TIMEOUT_SECONDS + "s");
             connectTimeout = Duration.ofSeconds(Long.parseLong(DEFAULT_CONNECT_TIMEOUT_SECONDS));
         }
-
-        LOGGER.info(String.format(
-                "Initializing HttpClientConnector: requestTimeout=%ds, connectTimeout=%ds, executor=VirtualThreads",
-                requestTimeout.getSeconds(), connectTimeout.getSeconds()));
 
         return new HttpClientConnector(requestTimeout, connectTimeout, executor);
     }

@@ -1,16 +1,49 @@
-# Maven / Java build outputs
+# --- Build & Artifacts ---
 **/target/
 **/build/
+**/out/
 *.class
+*.jar
+*.war
+*.ear
+*.zip
+*.tar.gz
+*.rar
+
+# Maven specific
 pom.xml.tag
 pom.xml.releaseBackup
 pom.xml.versionsBackup
 release.properties
 .flattened-pom.xml
 .mvn/timing.properties
+dependency-reduced-pom.xml
 
-# Quarkus
+# JVM crash logs
+hs_err_pid*
+replay_pid*
+
+# --- Quarkus ---
 .quarkus/
+**/lib/
+**/quarkus-app/
+**/quarkus-artifact.txt
+**/quarkus-bin/
+/.quarkus/cli/plugins/
+
+# --- IDEs & Editors ---
+# IntelliJ IDEA
+.idea/
+*.ipr
+*.iml
+*.iws
+out/
+
+# VS Code
+.vscode/
+!.vscode/extensions.json
+.factorypath
+.history/
 
 # Eclipse
 .project
@@ -18,38 +51,51 @@ release.properties
 .settings/
 bin/
 
-# IntelliJ
-.idea/
-*.ipr
-*.iml
-*.iws
-
 # NetBeans
 nb-configuration.xml
-
-# Visual Studio Code
-.vscode/
-.factorypath
-
-# OS
-.DS_Store
 
 # Vim
 *.swp
 *.swo
+*~
 
-# patch
-*.orig
-*.rej
+# --- OS Specific ---
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
 
-# Local environment
-.env
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+.directory
+.Trash-*
+
+# --- Environment & Secrets ---
+presentation/businessapi/.env
 .env.*
 !.env.example
 *.log
 
-# Plugin directory
-/.quarkus/cli/plugins/
-
 # TLS Certificates
 .certs/
+
+# --- Testing & Coverage ---
+# Coverage reports
+.coverage
+coverage/
+htmlcov/
+*.cover
+.hypothesis/
+
+# --- Misc ---
+.venv/
+node_modules/
+.recommenders/
