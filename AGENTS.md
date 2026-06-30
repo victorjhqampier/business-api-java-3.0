@@ -27,7 +27,7 @@ presentation/businessapi → application
 
 - `application` orchestrates use cases via **domain interfaces** (`domain/interfaces/`). `infrastructure` implements them.
 - `application/ports/` = input ports consumed by `presentation`. Do not put output contracts there.
-- All use cases return `EasyResult<T>` (success/failure/empty). No exceptions for expected flows.
+- All use cases exposed through `application/ports/` return `EasyResult<T>` directly (success/failure/empty), not `CompletableFuture<EasyResult<T>>`. No exceptions for expected flows.
 
 ## Package vs file path quirk
 
@@ -71,21 +71,27 @@ mvn package -Pnative -DskipTests
 - **FluentValidationExecutor**: validators are `private static final` or `@ApplicationScoped` — never reconstructed per request.
 - **Loggers**: `private static final Logger LOGGER = Logger.getLogger(...)` — never per-instance.
 - **ObjectMapper**: `private static final` with `JavaTimeModule` registered once.
-- **Virtual threads**: `@RunOnVirtualThread` on REST endpoints (presentation only). `application` receives `ExecutorService` by constructor, uses `CompletableFuture.*Async(..., executor)`. **Prohibited**: Quarkus/Jakarta annotations in `application` or `domain`.
+- **Virtual threads**: `@RunOnVirtualThread` on REST endpoints (presentation only). `application` stays framework-free and exposes imperative ports; use `CompletableFuture` internally only for real parallelism. `infrastructure` may receive `ExecutorService` by constructor for blocking I/O adapters. **Prohibited**: Quarkus/Jakarta annotations in `application` or `domain`.
+- **CDI producers**: every shared `@Produces` method must declare an explicit scope, normally `@ApplicationScoped`. `@Produces` alone creates dependent instances and can break singleton resources.
 - **No try-catch in `infrastructure` or `application`**: Exceptions flow to `presentation` which maps them to HTTP. Exception: catch + re-throw with extra context (e.g. traceId) allowed in infrastructure.
 - **Hot path**: Prefer `for` loops over `stream().map().toList()` when transforming validation error lists or large payloads.
 - **Controllers**: `@ApplicationScoped`, stateless.
+- **HTTP builder logging**: shared HTTP client code must use the caller logger and emit structured logs only for non-200 responses.
+- **Redis configuration**: runtime Redis values come from environment/config injection, not `application.properties`. Normalize accidental quotes in presentation wiring when needed.
+- **Docker/AWS**: keep the root `Dockerfile` multi-stage, build from the Maven reactor root, run on Amazon Corretto 21, and never copy `.env` files into images.
 
-## Composition Root (4 classes)
+## Composition Root
 
-Actual wiring is in `presentation/businessapi/src/main/java/com/arify/config/`:
+Actual wiring is in `presentation/businessapi/src/main/java/com/arify/startup/`:
 
 | Class | Responsibility |
 |-------|---------------|
-| `GlobalStartUp` | Technical resources (ExecutorService, HttpClientConnector, JedisPooled, MemoryQueue) |
-| `InfrastructureStartUp` | Domain adapters (FakeApiCommand, RedisCacheInfrastructure) |
-| `ApplicationStartUp` | Use cases and services (CacheLibraryService, ExampleUseCase) |
-| `PresentationStartUp` | Lifecycle hooks (background listeners, startup/shutdown) |
+| `ThreadSetting` | Virtual thread `ExecutorService` |
+| `HttpClientBuilderSetting` | Shared `HttpClientConnector` |
+| `RedisSetting` | `JedisPooled`, `CacheLibraryService`, `RedisCacheInfrastructure` |
+| `FakeApiSetting` | `FakeApiCommand` adapter |
+| `ApplicationSetting` | Use cases exposed through application ports |
+| `EventListenerSetting` | Memory queue and background listener lifecycle |
 
 ## Per-module AGENTS.md
 

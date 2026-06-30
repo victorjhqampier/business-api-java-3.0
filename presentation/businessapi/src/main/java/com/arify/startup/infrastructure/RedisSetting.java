@@ -36,7 +36,19 @@ public class RedisSetting {
     @ApplicationScoped
     public JedisPooled jedisPooled() {
         /*LOGGER.info("services.AddSingleton<JedisPooled>()");*/
-        return RedisStarting.init(redisHost, redisPassword, redisDatabase, redisSsl);
+        return RedisStarting.init(normalizeConfigValue(redisHost), normalizeConfigValue(redisPassword), redisDatabase, redisSsl);
+    }
+
+    private static String normalizeConfigValue(String value) {
+        String normalized = value.trim();
+        if (normalized.length() >= 2) {
+            char first = normalized.charAt(0);
+            char last = normalized.charAt(normalized.length() - 1);
+            if ((first == '"' && last == '"') || (first == '\'' && last == '\'')) {
+                return normalized.substring(1, normalized.length() - 1);
+            }
+        }
+        return normalized;
     }
 
     // ---- Dependency Injection Section ------

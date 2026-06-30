@@ -18,6 +18,75 @@ Este template esta orientado a APIs **data-intensive** primero y **processing-in
 java -jar presentation/businessapi/target/quarkus-app/quarkus-run.jar
 ```
 
+## Build y ejecucion con Docker
+
+La imagen Docker usa multi-stage build: un stage compila el reactor Maven multi-modulo y el stage final copia solo `presentation/businessapi/target/quarkus-app`. La imagen runtime usa Amazon Corretto 21 para despliegues en AWS ECS/EKS.
+
+Build local desde la raiz del proyecto:
+
+```bash
+docker build -t businessapi:local .
+```
+
+Run local:
+
+```bash
+docker run --rm -p 8080:8080 \
+  -e REDISDATABASE_HOST=192.168.3.204 \
+  -e REDISDATABASE_PASSWD='Sysadmin123++' \
+  -e REDISDATABASE_DATABASE=0 \
+  -e REDISDATABASE_SSL=false \
+  -e EXAMPLE_HOST_BASE=https://jsonplaceholder.typicode.com \
+  -e EXAMPLE_TITLE_BASE=https://fakerapi.it \
+  -e HTTP_CLIENT_REQUEST_TIMEOUT=5 \
+  -e HTTP_CLIENT_CONNECT_TIMEOUT=1 \
+  businessapi:local
+```
+
+Health check:
+
+```bash
+curl http://localhost:8080/health
+```
+
+Publicar en Amazon ECR:
+
+```bash
+AWS_REGION=us-east-1
+AWS_ACCOUNT_ID=123456789012
+ECR_REPOSITORY=businessapi
+IMAGE_TAG=latest
+
+aws ecr get-login-password --region "$AWS_REGION" \
+  | docker login --username AWS --password-stdin "$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
+
+aws ecr describe-repositories --region "$AWS_REGION" --repository-names "$ECR_REPOSITORY" \
+  || aws ecr create-repository --region "$AWS_REGION" --repository-name "$ECR_REPOSITORY"
+
+docker tag businessapi:local "$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY:$IMAGE_TAG"
+docker push "$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY:$IMAGE_TAG"
+```
+
+Para ECS/EKS, configurar variables sensibles con Secrets/Parameter Store/Kubernetes Secrets. No incluir `.env` dentro de la imagen.
+
+## Create .env archive in businessapi
+```bash
+.../business-api-java-3.0/presentation/businessapi/.env
+```
+
+```bash
+    REDISDATABASE_HOST=192.168.3.204
+    REDISDATABASE_PASSWD=Sysadmin123++
+    REDISDATABASE_DATABASE=0
+    REDISDATABASE_SSL=false
+
+    EXAMPLE_HOST_BASE=https://jsonplaceholder.typicode.com
+    EXAMPLE_TITLE_BASE=https://fakerapi.it
+
+    # HTTP client timeouts in seconds. Defaults in code are 5 and 1.
+    HTTP_CLIENT_REQUEST_TIMEOUT=5
+    HTTP_CLIENT_CONNECT_TIMEOUT=1
+```
 ## Swagger UI y OpenAPI
 
 - Swagger UI (local): http://localhost:8080/q/swagger-ui
@@ -34,7 +103,7 @@ java -jar presentation/businessapi/target/quarkus-app/quarkus-run.jar
 ## Recomendaciones para iniciar un nuevo microservicio
 
 1. Reemplazar nombres Example* por tu contexto de negocio.
-2. Definir puertos de salida en application y sus adaptadores en infrastructure.
+2. Definir interfaces de salida en `domain/interfaces/` y sus adaptadores en `infrastructure`.
 3. Agregar pruebas unitarias de use cases y pruebas de integracion por endpoint critico.
 4. Configurar pipeline CI para ejecutar compile, test y analisis estatico.
 
@@ -55,9 +124,14 @@ java -jar presentation/businessapi/target/quarkus-app/quarkus-run.jar
 - Version de Java validada en build con Maven Enforcer.
 - Pruebas de endpoint como minimo para health/ping.
 - **Objetos Singleton obligatorios**: Validadores sin estado, `ObjectMapper`, `Logger`, clientes HTTP/connectors y metadata deben reutilizarse como `private static final` o `@ApplicationScoped`.
+- **CDI Producers**: Todo `@Produces` que entregue un recurso compartido debe declarar scope explicito (`@ApplicationScoped`). `@Produces` solo no equivale a singleton.
 - **Evitar asignaciones innecesarias**: Reflection, reconstruccion de reglas, regex compilation, streams en hot path y logs de warning en flujos esperados (4xx).
-- **Hilos Virtuales (Java 21)**: Usar `@RunOnVirtualThread` solo en presentation. En application, usar Java nativo (`Executor`/`ExecutorService`, `CompletableFuture.*Async(..., executor)`) para continuaciones o APIs bloqueantes; usar ejecutores acotados para trabajo CPU-bound.
+- **Hilos Virtuales (Java 21)**: Usar `@RunOnVirtualThread` solo en presentation. `application` expone puertos imperativos con `EasyResult<T>` directo; usa `CompletableFuture` internamente solo para paralelismo real. `infrastructure` puede usar `ExecutorService` virtual para I/O bloqueante.
 - **Hot Path optimizado**: Preferir loops tradicionales sobre streams cuando se transforman listas de errores o payloads en rutas calientes (422, validación).
+- **Configuracion runtime**: Redis, hosts externos y timeouts se configuran con env vars/secrets. No usar `application.properties` para solucionar secretos o configuracion de despliegue.
+- **HTTP builder**: Usar logger del caller, emitir log estructurado solo para `statusCode != 200` y evitar cachear respuestas de error como datos validos.
+- **Errores globales**: Errores no capturados por controllers deben responder con el wrapper estandar mediante `GlobalExceptionMapper`.
+- **Docker AWS**: Mantener Docker multi-stage desde el reactor Maven raiz, runtime Amazon Corretto 21 y `.env` fuera de la imagen.
 
 ## Enfoque data-intensive
 
@@ -90,12 +164,14 @@ private static final TraceIdentifierAdapterValidator TRACE_IDENTIFIER_VALIDATOR 
 @Path("/{id}/create")
 @RunOnVirtualThread
 public Response postDataAsync(...) {
-    EasyResult<T> result = useCase.getDataAsync(...).join(); // .join() es idiomático aquí
+    EasyResult<T> result = useCase.getDataAsync(...);
 }
 
-// Application: Usar ExecutorService inyectado
-return CompletableFuture.allOf(task1, task2)
-    .thenApplyAsync(ignored -> mapResult(...), myThreadExec);
+// Application: paralelismo interno solo cuando hay llamadas independientes
+CompletableFuture.allOf(task1, task2)
+    .orTimeout(token.remainingTimeout().toMillis(), TimeUnit.MILLISECONDS)
+    .join();
+return mapResult(task1.join(), task2.join());
 ```
 
 **Hot Path Optimizado**:
@@ -112,7 +188,7 @@ List<FieldErrorInternalModel> errors = errorList.stream()
     .toList(); // Crea intermediarios
 ```
 
-En casos de uso, no envolver una llamada que ya retorna `CompletableFuture` dentro de `supplyAsync` solo para usar virtual threads. Eso agrega overhead. El patron recomendado es que infrastructure exponga operaciones no bloqueantes cuando pueda, y que application use el executor inyectado para continuaciones (`thenApplyAsync`, `thenComposeAsync`) o para adaptar trabajo I/O-bound realmente bloqueante.
+En casos de uso, no envolver una llamada que ya retorna `CompletableFuture` dentro de `supplyAsync` solo para usar virtual threads. Eso agrega overhead. El patron recomendado es que presentation ejecute el caso de uso imperativo sobre virtual threads, infrastructure exponga operaciones async cuando haga I/O y application use `CompletableFuture` solo para coordinar paralelismo real.
 
 ## Hallazgos de rendimiento
 

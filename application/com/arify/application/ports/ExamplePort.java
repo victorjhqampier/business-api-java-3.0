@@ -6,8 +6,6 @@ import com.arify.application.internals.adapters.TraceIdentifierAdapter;
 import com.arify.application.internals.executors.EasyResult;
 import com.arify.domain.commons.CancellationToken;
 
-import java.util.concurrent.CompletableFuture;
-
 public interface ExamplePort {
-    CompletableFuture<EasyResult<CreateExampleAdapter>> getDataAsync(TraceIdentifierAdapter trace, ExampleRequestAdapter exampleRequest, CancellationToken token);
+    EasyResult<CreateExampleAdapter> getDataAsync(TraceIdentifierAdapter trace, ExampleRequestAdapter exampleRequest, CancellationToken token);
 }

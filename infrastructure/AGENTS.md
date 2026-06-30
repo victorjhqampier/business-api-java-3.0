@@ -7,26 +7,26 @@ Principios de arquitectura de infraestructura para aplicaciones **Data-Intensive
 La capa de infraestructura se divide en dos tipos de componentes:
 
 ### 1. Recursos Técnicos (Technical Resources)
-Clientes y wrappers de bajo nivel que gestionan conexiones a servicios externos (Redis, HTTP, bases de datos, etc.). Estos se registran en `GlobalStartUp` como Singletons (`@ApplicationScoped`).
+Clientes y wrappers de bajo nivel que gestionan conexiones a servicios externos (Redis, HTTP, bases de datos, etc.). Estos se registran en `presentation/businessapi/src/main/java/com/arify/startup/` como Singletons (`@ApplicationScoped`).
 
 **Características**:
 - Poseen un archivo `*Starting.java` con un método `init()` que encapsula la configuración.
 - Leen variables de entorno priorizándolas sobre valores por defecto.
 - Gestionan recursos compartidos (pools de conexiones, clients nativos).
-- Se producen en `GlobalStartUp` del Composition Root.
+- Se producen en las clases `*Setting` del Composition Root.
 
 **Ejemplos**:
 - `JedisPooled` (vía `RedisStarting.init()`)
 - `HttpClientConnector` (vía `HttpClientStarting.init(executor)`)
 
 ### 2. Adaptadores de Dominio (Domain Adapters)
-Implementaciones de interfaces definidas en `domain/interfaces/`. Representan la lógica de negocio que interactúa con servicios externos. Estos se registran en `InfrastructureStartUp` como Singletons.
+Implementaciones de interfaces definidas en `domain/interfaces/`. Representan la lógica de negocio que interactúa con servicios externos. Estos se registran en las clases `*Setting` de infrastructure como Singletons.
 
 **Características**:
 - **No poseen `*Starting.java`**. Se instancian directamente con `new` en el Composition Root.
 - Reciben dependencias (recursos técnicos, executors) por constructor.
 - Implementan interfaces de dominio puras (`IFakeApiInfrastructure`, `ICacheInfrastructure`).
-- Mantienen el wiring visible y transparente en `InfrastructureStartUp`.
+- Mantienen el wiring visible y transparente en el Composition Root (`presentation/businessapi/src/main/java/com/arify/startup/`).
 
 **Ejemplos**:
 - `FakeApiCommand` (implementa `IFakeApiInfrastructure`)
@@ -65,7 +65,7 @@ public final class RedisCacheInfrastructure implements ICacheInfrastructure {
 }
 ```
 
-**Wiring en `InfrastructureStartUp`**:
+**Wiring en `RedisSetting` o `FakeApiSetting`**:
 ```java
 @Produces
 @ApplicationScoped
@@ -77,9 +77,9 @@ public ICacheInfrastructure cacheInfrastructure(
 }
 ```
 
-### 2. Compatibilidad Total con Código Existente
+### 2. Compatibilidad con Código Existente
 
-**Regla de Oro**: Al agregar nuevas capacidades de alto rendimiento (como Virtual Threads), **siempre mantener constructores anteriores** para no romper código existente.
+**Regla**: Mantener constructores anteriores solo cuando exista compatibilidad real que preservar: consumidores externos, datos persistidos, comportamiento publicado o requerimiento explicito. Si no existe esa necesidad, preferir el cambio minimo y directo.
 
 **Patrón de constructores sobrecargados**:
 ```java
@@ -110,9 +110,9 @@ public class HttpClientConnector {
 }
 ```
 
-### 3. Priorización de Variables de Entorno
+### 3. Priorización de Configuracion Runtime
 
-**Regla**: Los `*Starting.java` deben leer configuraciones desde variables de entorno **antes** que desde valores por defecto.
+**Regla**: Los recursos tecnicos deben obtener configuracion runtime desde variables de entorno o MicroProfile Config en presentation. No hardcodear secretos ni mover valores sensibles a `application.properties`.
 
 **Patrón estándar**:
 ```java
@@ -120,10 +120,9 @@ public static HttpClientConnector init(ExecutorService executor) {
     String requestTimeoutStr = System.getenv("HTTP_CLIENT_REQUEST_TIMEOUT");
     String connectTimeoutStr = System.getenv("HTTP_CLIENT_CONNECT_TIMEOUT");
 
-    // Fallback a valores por defecto si no están en el environment
+    // Fallback a valores por defecto si no estan en el environment
     if (requestTimeoutStr == null || requestTimeoutStr.isBlank()) {
         requestTimeoutStr = "5";
-        LOGGER.warning("HTTP_CLIENT_REQUEST_TIMEOUT not found in environment, using default: 5s");
     }
 
     Duration requestTimeout = Duration.ofSeconds(Long.parseLong(requestTimeoutStr));
@@ -138,7 +137,15 @@ public static HttpClientConnector init(ExecutorService executor) {
 - **Docker/Kubernetes Ready**: Variables de entorno son el estándar en contenedores.
 - **Seguridad**: Secrets no quedan hardcodeados.
 
-### 4. Singletons Estáticos para Componentes Pesados
+### 4. HTTP Builder y Observabilidad
+
+**Reglas**:
+- El HTTP builder debe recibir y usar el `Logger` de la clase caller, no un logger generico de la libreria.
+- Emitir logs estructurados de llamadas externas solo cuando `statusCode != 200`.
+- Errores de comunicacion esperados en infraestructura HTTP deben convertirse a una respuesta/entidad de resultado segura para que application decida `EasyResult`, no romper el flujo con excepciones esperadas.
+- Si un adaptador recibe `statusCode != 200`, debe retornar ausencia (`Optional.empty()` o equivalente) y evitar cachear payloads de error como datos validos.
+
+### 5. Singletons Estáticos para Componentes Pesados
 
 **Mandato**: Todos los componentes pesados deben ser `private static final` o `@ApplicationScoped`.
 
@@ -170,14 +177,14 @@ public static HttpClientConnector init(ExecutorService executor) {
 3. **El wiring debe ser visible** en el Composition Root para claridad arquitectónica.
 
 **Ejemplos**:
-- `FakeApiCommand` → Se instancia con `new FakeApiCommand(queue, connector)` en `InfrastructureStartUp`.
-- `RedisCacheInfrastructure` → Se instancia con `new RedisCacheInfrastructure(jedis, executor)` en `InfrastructureStartUp`.
+- `FakeApiCommand` se instancia con `new FakeApiCommand(queue, connector)` en `FakeApiSetting`.
+- `RedisCacheInfrastructure` se instancia con `new RedisCacheInfrastructure(jedis, executor)` en `RedisSetting`.
 
 ---
 
 ## Flujo de Wiring (Composition Root)
 
-### `GlobalStartUp.java` (Recursos Técnicos)
+### `ThreadSetting.java` y `HttpClientBuilderSetting.java` (Recursos Técnicos)
 ```java
 @Produces
 @ApplicationScoped
@@ -189,26 +196,30 @@ public ExecutorService virtualThreadExecutor() {
 @Produces
 @ApplicationScoped
 public HttpClientConnector httpClientConnector(@Named("virtualThreadExecutor") ExecutorService executor) {
-    LOGGER.info("services.AddSingleton<HttpClientConnector>()");
     return HttpClientStarting.init(executor);
 }
+```
+
+### `RedisSetting.java` (Redis y Cache)
+```java
+@Inject
+@ConfigProperty(name = "REDISDATABASE_HOST")
+String redisHost;
 
 @Produces
 @ApplicationScoped
 public JedisPooled jedisPooled() {
-    LOGGER.info("services.AddSingleton<JedisPooled>()");
-    return RedisStarting.init();
+    return RedisStarting.init(normalizeConfigValue(redisHost), normalizeConfigValue(redisPassword), redisDatabase, redisSsl);
 }
 ```
 
-### `InfrastructureStartUp.java` (Adaptadores de Dominio)
+### `FakeApiSetting.java` y `RedisSetting.java` (Adaptadores de Dominio)
 ```java
 @Produces
 @ApplicationScoped
 public IFakeApiInfrastructure fakeApiInfrastructure(
         MicroserviceCallMemoryQueue memoryQueue, 
         HttpClientConnector httpClientConnector) {
-    LOGGER.info("services.AddSingleton<IFakeApiInfrastructure, FakeApiCommand>()");
     return new FakeApiCommand(memoryQueue, httpClientConnector);
 }
 
@@ -217,28 +228,23 @@ public IFakeApiInfrastructure fakeApiInfrastructure(
 public ICacheInfrastructure cacheInfrastructure(
         JedisPooled jedisPooled, 
         @Named("virtualThreadExecutor") ExecutorService virtualThreadExecutor) {
-    LOGGER.info("services.AddSingleton<ICacheInfrastructure, RedisCacheInfrastructure>()");
     return new RedisCacheInfrastructure(jedisPooled, virtualThreadExecutor);
 }
 ```
 
-### `ApplicationStartUp.java` (Casos de Uso)
+### `ApplicationSetting.java` (Casos de Uso)
 ```java
 @Produces
 @ApplicationScoped
 public CacheLibraryService cacheLibraryService(ICacheInfrastructure cacheInfrastructure) {
-    LOGGER.info("services.AddSingleton<CacheLibraryService>()");
     return new CacheLibraryService(cacheInfrastructure);
 }
 
 @Produces
 @ApplicationScoped
 public ExamplePort exampleUseCase(
-        IFakeApiInfrastructure fakeApiInfrastructure, 
-        CacheLibraryService cacheLibraryService,
-        @Named("virtualThreadExecutor") ExecutorService virtualThreadExecutor) {
-    LOGGER.info("services.AddSingleton<ExamplePort, ExampleUseCase>()");
-    return new ExampleUseCase(fakeApiInfrastructure, cacheLibraryService, virtualThreadExecutor);
+        IFakeApiInfrastructure fakeApiInfrastructure) {
+    return new ExampleUseCase(fakeApiInfrastructure);
 }
 ```
 
@@ -252,12 +258,12 @@ public ExamplePort exampleUseCase(
 - **Connection Pooling**: Recursos técnicos mantienen pools internos optimizados.
 
 ### 🧩 Mantenibilidad
-- **Wiring Transparente**: El `InfrastructureStartUp` muestra claramente qué adaptadores se usan.
+- **Wiring Transparente**: Las clases `*Setting` muestran claramente qué recursos y adaptadores se usan.
 - **Separación de Responsabilidades**: Recursos técnicos vs. adaptadores de dominio.
-- **Compatibilidad Total**: Constructores sobrecargados permiten migración gradual.
+- **Compatibilidad consciente**: Constructores sobrecargados solo cuando hay consumidores reales que preservar.
 
 ### 🔒 Seguridad y Configuración
-- **Variables de Entorno Priorizadas**: Configuración externa y portable.
+- **Configuracion externa**: Variables de entorno/secrets en runtime, sin secretos hardcodeados.
 - **Logs Informativos**: Advertencias cuando se usan valores por defecto.
 - **12-Factor App Compliance**: Listo para contenedores y orquestadores.
 
@@ -265,10 +271,10 @@ public ExamplePort exampleUseCase(
 
 ## Prohibiciones Arquitectónicas
 
-1. **Usar `ForkJoinPool.commonPool`** en implementaciones que hacen I/O. Inyectar Virtual Threads obligatoriamente.
+1. **Usar `ForkJoinPool.commonPool`** en implementaciones que hacen I/O bloqueante. Inyectar Virtual Threads obligatoriamente en esos adaptadores.
 2. **Crear `ObjectMapper`, `Logger` o `Validators` no estáticos**. Deben ser `private static final`.
 3. **Ocultar el wiring de adaptadores de dominio** en métodos `init()`. Mantener la transparencia en el Composition Root.
-4. **Romper compatibilidad** de constructores existentes. Siempre agregar sobrecarga, no reemplazar.
+4. **Agregar compatibilidad innecesaria**. Mantener sobrecargas solo si hay consumidores reales que preservar.
 5. **Hardcodear configuraciones sensibles**. Usar variables de entorno priorizadas.
 
 ---

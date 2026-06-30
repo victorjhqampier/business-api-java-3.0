@@ -13,58 +13,29 @@ com/arify/redisinfra/
 
 ## Principios de Alto Rendimiento (Data-Intensive Caching)
 
-### 1. Priorización de Variables de Entorno
+### 1. Priorización de Configuracion Runtime
 
-**Regla obligatoria**: Las configuraciones de conexión a Redis deben priorizarse en el siguiente orden:
+**Regla obligatoria**: Las configuraciones de conexión a Redis deben venir de variables de entorno o MicroProfile Config en presentation:
 
-1. **Variables de entorno (.env)** - PRIORIDAD MÁXIMA
-2. **Valores por defecto (fallback)** - Solo si no existe la variable de entorno
+1. **Variables de entorno/secrets** - produccion, ECS/EKS, Docker y CI.
+2. **Archivo `.env` local** - solo desarrollo local, nunca dentro de imagen Docker.
+3. **Defaults de codigo** - solo para valores no sensibles y cuando sean seguros.
 
-**Patrón obligatorio en `GlobalStartUp.java`**:
+**Patrón obligatorio en `RedisSetting.java`**:
 
 ```java
+@Inject
+@ConfigProperty(name = "REDISDATABASE_HOST")
+String redisHost;
+
+@Inject
+@ConfigProperty(name = "REDISDATABASE_PASSWD")
+String redisPassword;
+
 @Produces
 @ApplicationScoped
 public JedisPooled jedisPooled() {
-    // Priorizar variables de entorno (.env) sobre application.properties
-    String host = System.getenv("REDISDATABASE_HOST");
-    String password = System.getenv("REDISDATABASE_PASSWD");
-    String databaseStr = System.getenv("REDISDATABASE_DATABASE");
-    String sslStr = System.getenv("REDISDATABASE_SSL");
-    String abortStr = System.getenv("REDISDATABASE_ABORTONCONNECTFAIL");
-
-    // Fallback a valores por defecto si no están en el environment
-    if (host == null || host.isBlank()) {
-        host = "localhost";
-        LOGGER.warning("REDISDATABASE_HOST not found in environment, using default: localhost");
-    }
-    
-    if (password == null || password.isBlank()) {
-        password = "your-redis-password";
-        LOGGER.warning("REDISDATABASE_PASSWD not found in environment, using default");
-    }
-
-    int database = 0;
-    if (databaseStr != null && !databaseStr.isBlank()) {
-        try {
-            database = Integer.parseInt(databaseStr);
-        } catch (NumberFormatException ex) {
-            LOGGER.warning("REDISDATABASE_DATABASE invalid format, using default: 0");
-        }
-    }
-
-    boolean ssl = false;
-    if (sslStr != null && !sslStr.isBlank()) {
-        ssl = Boolean.parseBoolean(sslStr);
-    }
-
-    boolean abortOnConnectFail = false;
-    if (abortStr != null && !abortStr.isBlank()) {
-        abortOnConnectFail = Boolean.parseBoolean(abortStr);
-    }
-
-    LOGGER.info("services.AddSingleton<JedisPooled>()");
-    return RedisStarting.init(host, password, database, ssl, abortOnConnectFail);
+    return RedisStarting.init(normalizeConfigValue(redisHost), normalizeConfigValue(redisPassword), redisDatabase, redisSsl);
 }
 ```
 
@@ -72,7 +43,7 @@ public JedisPooled jedisPooled() {
 - **12-Factor App Compliance**: Configuración externa al código.
 - **Docker/Kubernetes Ready**: Variables de entorno son el estándar en contenedores.
 - **Seguridad**: Secrets no quedan hardcodeados en `application.properties`.
-- **Logs Informativos**: Advierte cuando se usan valores por defecto.
+- **Compatibilidad local**: Normalizar comillas accidentales evita hosts como `"192.168.3.204"`.
 
 ### 2. Configuración con Archivo .env
 
@@ -116,15 +87,14 @@ services:
 
 ### 3. Singleton de JedisPooled (Connection Pooling)
 
-**Patrón obligatorio**: `JedisPooled` debe ser `@ApplicationScoped` (Singleton CDI) producido en `GlobalStartUp.java`.
+**Patrón obligatorio**: `JedisPooled` debe ser `@ApplicationScoped` (Singleton CDI) producido en `RedisSetting.java`.
 
 ```java
-// GlobalStartUp.java (Technical Resources)
+// RedisSetting.java
 @Produces
 @ApplicationScoped
 public JedisPooled jedisPooled() {
-    // ... leer variables de entorno
-    return RedisStarting.init(host, password, database, ssl, abortOnConnectFail);
+    return RedisStarting.init(host, password, database, ssl);
 }
 ```
 
@@ -250,26 +220,24 @@ Evita lookup de logger por cada request.
 
 ### Separación de Responsabilidades
 
-**GlobalStartUp.java** (Technical Resources):
+**RedisSetting.java** (Technical Resource):
 ```java
 // 1. Recurso técnico global: La conexión persistente
 @Produces
 @ApplicationScoped
 public JedisPooled jedisPooled() {
-    // Lee variables de entorno
+    // Lee variables de entorno/MicroProfile Config
     // Llama a RedisStarting.init(...)
-    // Log: services.AddSingleton<JedisPooled>()
 }
 ```
 
-**InfrastructureStartUp.java** (Domain Adapters):
+**RedisSetting.java** (Domain Adapter):
 ```java
 // 2. Adaptador de dominio: Implementación de la interfaz de caché
 @Produces
 @ApplicationScoped
-public ICacheInfrastructure cacheInfrastructure(JedisPooled jedisPooled) {
-    LOGGER.info("services.AddSingleton<ICacheInfrastructure, RedisCacheInfrastructure>()");
-    return new RedisCacheInfrastructure(jedisPooled);
+public ICacheInfrastructure cacheInfrastructure(JedisPooled jedisPooled, @Named("virtualThreadExecutor") ExecutorService executor) {
+    return new RedisCacheInfrastructure(jedisPooled, executor);
 }
 ```
 
@@ -334,7 +302,7 @@ CREATED → CLOSED    (sin validación de ownerToken)
 
 - Crear `new ObjectMapper()` fuera de `RedisCacheInfrastructure`.
 - Instanciar `JedisPooled` manualmente (debe ser `@ApplicationScoped`).
-- Usar `@ConfigProperty` para configuración de Redis (usar variables de entorno directamente con `System.getenv()`).
+- Usar `application.properties` para secretos o configuracion de despliegue Redis. Usar env vars/MicroProfile Config en presentation.
 - Hardcodear secrets en `application.properties`.
 - Logger no estático.
 - **Usar `try-catch` en infrastructure o application**: Las excepciones deben fluir hacia `presentation`. Solo se permite `catch + throw` para enriquecer contexto antes de re-lanzar.
@@ -448,10 +416,10 @@ export REDISDATABASE_DATABASE=0
 
 # 4. Verificar logs de inicio
 # Debe aparecer:
-# INFO  [GlobalStartUp] services.AddSingleton<JedisPooled>()
+# INFO  [RedisSetting] JedisPooled created
 # INFO  [RedisStarting] Initializing Redis connection: host=localhost, database=0, ssl=false
 # INFO  [RedisStarting] Redis connection established successfully
-# INFO  [InfrastructureStartUp] services.AddSingleton<ICacheInfrastructure, RedisCacheInfrastructure>()
+# INFO  [RedisSetting] RedisCacheInfrastructure created
 ```
 
 ## Comparativa: Java vs .NET

@@ -14,11 +14,13 @@ import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.TimeoutException;
+import java.util.logging.Logger;
 
 public class HttpClientBuilder {
     private static final int MAX_TRACE_PAYLOAD_LENGTH = 4096;
@@ -29,6 +31,7 @@ public class HttpClientBuilder {
     private static final int STATUS_SERVICE_UNAVAILABLE = 503;
 
     private final HttpClientConnector apiClient;
+    private final Logger logger;
     private final OffsetDateTime startDatetime;
 
     private String baseUrl;
@@ -42,8 +45,9 @@ public class HttpClientBuilder {
     private String keyword;
     private Duration timeout;
 
-    public HttpClientBuilder(HttpClientConnector apiClient) {
-        this.apiClient = apiClient;
+    public HttpClientBuilder(HttpClientConnector apiClient, Logger logger) {
+        this.apiClient = Objects.requireNonNull(apiClient, "apiClient cannot be null");
+        this.logger = Objects.requireNonNull(logger, "logger cannot be null");
         this.startDatetime = OffsetDateTime.now();
         this.baseUrl = "";
         this.endpoint = "";
@@ -237,6 +241,9 @@ public class HttpClientBuilder {
 
         if (response.statusCode() != STATUS_OK) {
             InfrastructureLogger.logMemoryEvent(
+                    logger,
+                    operationName,
+                    keyword,
                     method,
                     response.url() == null ? requestUrl : response.url(),
                     serializePayload(headers),

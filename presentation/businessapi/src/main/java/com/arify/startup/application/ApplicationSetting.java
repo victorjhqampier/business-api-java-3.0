@@ -11,9 +11,6 @@ import com.arify.domain.containers.cachelibraryservice.ICacheInfrastructure;
 import com.arify.domain.interfaces.IFakeApiInfrastructure;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.inject.Produces;
-import jakarta.inject.Named;
-
-import java.util.concurrent.ExecutorService;
 
 @ApplicationScoped
 public class ApplicationSetting {
@@ -22,32 +19,29 @@ public class ApplicationSetting {
     @ApplicationScoped
     public ExamplePort exampleUseCase(
             IFakeApiInfrastructure fakeApiInfrastructure,
-            CacheLibraryService cacheLibraryService,
-            @Named("virtualThreadExecutor") ExecutorService virtualThreadExecutor
+            CacheLibraryService cacheLibraryService
     ) {
         /*LOGGER.info("services.AddSingleton<ExamplePort, ExampleUseCase>()");*/
-        return new ExampleUseCase(fakeApiInfrastructure, cacheLibraryService, virtualThreadExecutor);
+        return new ExampleUseCase(fakeApiInfrastructure, cacheLibraryService);
     }
 
     @Produces
     @ApplicationScoped
     public ExampleCachePort exampleCacheUseCase(
             IFakeApiInfrastructure fakeApiInfrastructure,
-            ICacheInfrastructure redisProvider,
-            @Named("virtualThreadExecutor") ExecutorService virtualThreadExecutor
+            ICacheInfrastructure redisProvider
     ) {
         /*LOGGER.info("services.AddSingleton<ExampleCachePort, ExampleRedisUsecase>()");*/
-        return new ExampleRedisUsecase(fakeApiInfrastructure, redisProvider, virtualThreadExecutor);
+        return new ExampleRedisUsecase(fakeApiInfrastructure, redisProvider);
     }
 
     @Produces
     @ApplicationScoped
     public ExampleIdempotencyPort exampleIdempotencyUseCase(
             IFakeApiInfrastructure fakeApiInfrastructure,
-            CacheLibraryService cacheLibraryService,
-            @Named("virtualThreadExecutor") ExecutorService virtualThreadExecutor
+            CacheLibraryService cacheLibraryService
     ) {
         /*LOGGER.info("services.AddSingleton<ExampleIdempotencyPort, ExampleIdempotencyUsecase>()");*/
-        return new ExampleIdempotencyUsecase(fakeApiInfrastructure, cacheLibraryService, virtualThreadExecutor);
+        return new ExampleIdempotencyUsecase(fakeApiInfrastructure, cacheLibraryService);
     }
 }

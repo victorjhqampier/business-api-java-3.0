@@ -35,7 +35,7 @@ import java.util.logging.Logger;
 public class NoBianCacheController {
     private static final String OPERATION_NAME = "retrieve-cache";
     private static final String KEYWORD = "cache";
-    private static final Duration HTTP_TIMEOUT = Duration.ofSeconds(9);
+    private static final Duration RESPONSE_HTTP_TIMEOUT = Duration.ofSeconds(9);
     private static final Logger LOGGER = Logger.getLogger(NoBianCacheController.class.getName());
 
     @Inject
@@ -62,6 +62,8 @@ public class NoBianCacheController {
 
             @Context UriInfo uriInfo
     ) {
+        CancellationToken cancellationToken = CancellationToken.withTimeout(RESPONSE_HTTP_TIMEOUT);
+
         TraceIdentifierAdapter trace = new TraceIdentifierAdapter(
                 deviceIdentifier,
                 messageIdentifier,
@@ -77,10 +79,8 @@ public class NoBianCacheController {
                 deviceIdentifier
         );
 
-        CancellationToken cancellationToken = CancellationToken.withTimeout(HTTP_TIMEOUT);
-
         try {
-            EasyResult<RetrieveExampleAdapter> result = exampleCacheUseCase.showExampleAsync(trace, cancellationToken).join();
+            EasyResult<RetrieveExampleAdapter> result = exampleCacheUseCase.showExampleAsync(trace, cancellationToken);
             traceHandler.pushSuccess(uriInfo.getRequestUri().toString(), "GET", trace, result, result.status());
 
             if (!result.isSuccess()) {
@@ -101,7 +101,7 @@ public class NoBianCacheController {
             return EasyResponseHelper.noContent(499);
 
         } catch (CompletionException completionException) {
-            LOGGER.severe(String.format("Operation cancelled by timeout (%ds)", HTTP_TIMEOUT.getSeconds()));
+            LOGGER.severe(String.format("Operation cancelled by timeout (%ds)", RESPONSE_HTTP_TIMEOUT.getSeconds()));
             traceHandler.pushError(uriInfo.getRequestUri().toString(), "GET", trace, 408, "Request Timeout");
             return EasyResponseHelper.noContent(408);
 

@@ -10,32 +10,33 @@ import com.arify.httpclientbuilder.HttpClientConnector;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.logging.Logger;
 
 // Implementa la interfaz de dominio IFakeApiInfrastructure.
 // Retorna CompletableFuture<Optional<T>> para permitir composición asíncrona,
 // equivalente a Task<T> en C# .NET.
 public class FakeApiCommand implements IFakeApiInfrastructure {
-    private final MicroserviceCallMemoryQueue queue;
-    private final HttpClientConnector httpConnector;
+    private static final Logger _logger = Logger.getLogger(FakeApiCommand.class.getName());
+
+    private final MicroserviceCallMemoryQueue _queue;
+    private final HttpClientConnector _httpConnector;
 
     public FakeApiCommand(MicroserviceCallMemoryQueue queue, HttpClientConnector httpConnector) {
-        this.queue = queue;
-        this.httpConnector = httpConnector;
+        this._queue = queue;
+        this._httpConnector = httpConnector;
     }
 
     @Override
-    public CompletableFuture<Optional<FakeApiEntity>> getUserAsync(int id, CancellationToken cancellationToken) {
-        if (cancellationToken.isCancellationRequested()) {
-            return CompletableFuture.completedFuture(Optional.empty());
-        }
+    public CompletableFuture<Optional<FakeApiEntity>> getUserAsync(int id, CancellationToken ctx) {
+        if (ctx.isCancellationRequested()) {return CompletableFuture.completedFuture(Optional.empty());}
 
-        var httpClient = new HttpClientBuilder(httpConnector);
+        var httpClient = new HttpClientBuilder(_httpConnector, _logger);
         httpClient.http(FakeApiStarting.EXAMPLE_HOST_BASE)
                 .endpoint("todos/" + id)
                 .timeout(FakeApiStarting.TIMEOUT)
-                .withMemoryQueue(queue, FakeApiStarting.GET_USER_OPERATION, FakeApiStarting.USER_KEYWORD);
+                .withMemoryQueue(_queue, FakeApiStarting.GET_USER_OPERATION, FakeApiStarting.USER_KEYWORD);
 
-        return httpClient.get(cancellationToken).thenApply(response -> {
+        return httpClient.get(ctx).thenApply(response -> {
             if (response.statusCode() != 200) {
                 return Optional.empty();
             }
@@ -53,12 +54,10 @@ public class FakeApiCommand implements IFakeApiInfrastructure {
     }
 
     @Override
-    public CompletableFuture<Optional<FakeApiEntity>> getTitleAsync(int id, CancellationToken cancellationToken) {
-        if (cancellationToken.isCancellationRequested()) {
-            return CompletableFuture.completedFuture(Optional.empty());
-        }
+    public CompletableFuture<Optional<FakeApiEntity>> getTitleAsync(int id, CancellationToken ctx) {
+        if (ctx.isCancellationRequested()) {return CompletableFuture.completedFuture(Optional.empty());}
 
-        var httpClient = new HttpClientBuilder(httpConnector);
+        var httpClient = new HttpClientBuilder(_httpConnector, _logger);
         httpClient.http(FakeApiStarting.EXAMPLE_TITLE_BASE)
                 .endpoint("/api/v2/{myparam}")
                 .params(Map.of("myparam", "addresses"))
@@ -66,9 +65,9 @@ public class FakeApiCommand implements IFakeApiInfrastructure {
                         "_quantity", String.valueOf(id),
                         "_type", "JQ89uGoIjUBHtNPvqJT4dtBlsPgvo0QyxO+US/gIE2w="))
                 .timeout(FakeApiStarting.TIMEOUT)
-                .withMemoryQueue(queue, FakeApiStarting.GET_TITLE_OPERATION, FakeApiStarting.TITLE_KEYWORD);
+                .withMemoryQueue(_queue, FakeApiStarting.GET_TITLE_OPERATION, FakeApiStarting.TITLE_KEYWORD);
 
-        return httpClient.get(cancellationToken).thenApply(response -> {
+        return httpClient.get(ctx).thenApply(response -> {
                     if (response.statusCode() != 200) {
                         return Optional.empty();
                     }

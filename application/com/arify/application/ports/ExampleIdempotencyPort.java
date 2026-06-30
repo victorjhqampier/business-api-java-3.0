@@ -5,14 +5,13 @@ import com.arify.application.adapters.RetrieveExampleAdapter;
 import com.arify.application.internals.adapters.TraceIdentifierAdapter;
 import com.arify.application.internals.executors.EasyResult;
 import com.arify.domain.commons.CancellationToken;
-import java.util.concurrent.CompletableFuture;
 
 public interface ExampleIdempotencyPort {
-    CompletableFuture<EasyResult<RetrieveExampleAdapter>> getDataAsync(
+    EasyResult<RetrieveExampleAdapter> getDataAsync(
             TraceIdentifierAdapter trace,
             CancellationToken token);
 
-    CompletableFuture<EasyResult<RetrieveExampleAdapter>> setIdempotencyAsync(
+    EasyResult<RetrieveExampleAdapter> setIdempotencyAsync(
             TraceIdentifierAdapter trace,
             ExamplePreRequestAdapter body,
             CancellationToken token);

@@ -44,8 +44,7 @@ public class BianExampleController {
     @Inject
     MicroserviceCallMemoryQueue memoryQueue;
 
-    // @RunOnVirtualThread permite que el .join() sea no bloqueante para platform threads,
-    // similar al comportamiento de async/await en C#.
+    // @RunOnVirtualThread permite ejecutar flujos I/O-bound imperativos sin bloquear platform threads.
     @POST
     @Path("/{customer_id}/create")
     @RunOnVirtualThread
@@ -89,9 +88,7 @@ public class BianExampleController {
         CancellationToken cancellationToken = CancellationToken.withTimeout(HTTP_TIMEOUT);
 
         try {
-            // Como este endpoint usa @RunOnVirtualThread, hacer join() aquí es aceptable,
-            // Equivalente a: var result = await _exampleUsecase.ShowExampleAsync(headers, linkedCts.Token);
-            EasyResult<CreateExampleAdapter> result = exampleUseCase.getDataAsync(trace, body, cancellationToken).join();
+            EasyResult<CreateExampleAdapter> result = exampleUseCase.getDataAsync(trace, body, cancellationToken);
             traceHandler.pushSuccess(uriInfo.getRequestUri().toString(), "POST", body, result, result.status());
 
             if (!result.isSuccess()) {

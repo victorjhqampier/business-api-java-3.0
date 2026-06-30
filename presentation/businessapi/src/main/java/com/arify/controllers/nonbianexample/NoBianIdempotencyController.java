@@ -81,7 +81,7 @@ public class NoBianIdempotencyController {
         CancellationToken cancellationToken = CancellationToken.withTimeout(HTTP_TIMEOUT);
 
         try {
-            EasyResult<RetrieveExampleAdapter> result = exampleIdempotencyUseCase.getDataAsync(trace, cancellationToken).join();
+            EasyResult<RetrieveExampleAdapter> result = exampleIdempotencyUseCase.getDataAsync(trace, cancellationToken);
             traceHandler.pushSuccess(uriInfo.getRequestUri().toString(), "GET", trace, result, result.status());
 
             if (result.status() == 204) {
@@ -149,7 +149,7 @@ public class NoBianIdempotencyController {
         CancellationToken cancellationToken = CancellationToken.withTimeout(HTTP_TIMEOUT);
 
         try {
-            EasyResult<RetrieveExampleAdapter> result = exampleIdempotencyUseCase.setIdempotencyAsync(trace, body, cancellationToken).join();
+            EasyResult<RetrieveExampleAdapter> result = exampleIdempotencyUseCase.setIdempotencyAsync(trace, body, cancellationToken);
             traceHandler.pushSuccess(uriInfo.getRequestUri().toString(), "POST", body, result, result.status());
 
             if (result.status() == 204) {

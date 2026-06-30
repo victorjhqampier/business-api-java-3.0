@@ -22,45 +22,45 @@ infrastructure/redis-infrastructure/
     └── RedisCacheInfrastructure.java    # Implementación ICacheInfrastructure (407 líneas)
 ```
 
-**Nota**: Este módulo NO contiene configuración CDI. El wiring se hace exclusivamente en `presentation/businessapi/src/main/java/com/arify/config/AppConfiguration.java` (Composition Root).
+**Nota**: Este módulo NO contiene configuración CDI. El wiring se hace exclusivamente en `presentation/businessapi/src/main/java/com/arify/startup/infrastructure/RedisSetting.java` (Composition Root).
 
 ## Configuración
 
-La configuración de Redis se maneja en el **Composition Root** (`AppConfiguration.java`) siguiendo el mandato de arquitectura del proyecto.
+La configuración de Redis se maneja en el **Composition Root** (`RedisSetting.java`) siguiendo el mandato de arquitectura del proyecto.
 
 ### Variables de Entorno (Producción)
 
 ```bash
-export REDIS_HOST=redis.production.com
-export REDIS_PASSWORD=your-secure-password
-export REDIS_DATABASE=0
-export REDIS_SSL=true
+export REDISDATABASE_HOST=redis.production.com
+export REDISDATABASE_PASSWD=your-secure-password
+export REDISDATABASE_DATABASE=0
+export REDISDATABASE_SSL=true
 ```
 
-### application.properties (Desarrollo)
+### .env local (Desarrollo)
 
-```properties
-RedisDatabase.Host=localhost
-RedisDatabase.Passwd=your-redis-password
-RedisDatabase.Database=0
-RedisDatabase.Ssl=false
+```bash
+REDISDATABASE_HOST=localhost
+REDISDATABASE_PASSWD=your-redis-password
+REDISDATABASE_DATABASE=0
+REDISDATABASE_SSL=false
 ```
 
-**Nota**: En modo producción, las variables de entorno tienen prioridad sobre `application.properties`.
+**Nota**: No usar `application.properties` para secretos ni configuracion de despliegue. En Docker/ECS/EKS usar variables de entorno o secrets. El `.env` local no debe copiarse a la imagen.
 
 ## Wiring en Composition Root
 
-El módulo de Redis se conecta al resto de la aplicación en `presentation/businessapi/src/main/java/com/arify/config/AppConfiguration.java`:
+El módulo de Redis se conecta al resto de la aplicación en `presentation/businessapi/src/main/java/com/arify/startup/infrastructure/RedisSetting.java`:
 
 ```java
 @ApplicationScoped
-public class AppConfiguration {
+public class RedisSetting {
     
-    @ConfigProperty(name = "RedisDatabase.Host")
-    Optional<String> redisHost;
+    @ConfigProperty(name = "REDISDATABASE_HOST")
+    String redisHost;
     
-    @ConfigProperty(name = "RedisDatabase.Passwd")
-    Optional<String> redisPassword;
+    @ConfigProperty(name = "REDISDATABASE_PASSWD")
+    String redisPassword;
     
     // ... más campos de configuración
     
@@ -70,16 +70,7 @@ public class AppConfiguration {
     @Produces
     @ApplicationScoped
     public JedisPooled jedisPooled() {
-        // Lógica de construcción con configuración desde env/properties
-        HostAndPort hostAndPort = new HostAndPort(host, 6379);
-        DefaultJedisClientConfig config = DefaultJedisClientConfig.builder()
-                .password(password)
-                .database(database)
-                .connectionTimeoutMillis(500)
-                .socketTimeoutMillis(500)
-                .ssl(ssl)
-                .build();
-        return new JedisPooled(hostAndPort, config);
+        return RedisStarting.init(normalizeConfigValue(redisHost), normalizeConfigValue(redisPassword), redisDatabase, redisSsl);
     }
     
     /**
@@ -94,8 +85,8 @@ public class AppConfiguration {
      */
     @Produces
     @ApplicationScoped
-    public ICacheInfrastructure cacheInfrastructure(JedisPooled jedisPooled) {
-        return new RedisCacheInfrastructure(jedisPooled);
+    public ICacheInfrastructure cacheInfrastructure(JedisPooled jedisPooled, @Named("virtualThreadExecutor") ExecutorService executor) {
+        return new RedisCacheInfrastructure(jedisPooled, executor);
     }
 }
 ```
@@ -106,19 +97,18 @@ El `ICacheInfrastructure` se inyecta en los casos de uso a través del Compositi
 
 ```java
 @ApplicationScoped
-public class AppConfiguration {
-    
+public class ApplicationSetting {
+
     @Produces
     @ApplicationScoped
     public ExamplePort exampleUseCase(
             ICacheInfrastructure cacheInfrastructure,
-            IFakeApiInfrastructure fakeApiInfrastructure,
-            @Named("virtualThreadExecutor") ExecutorService executor) {
-        
+            IFakeApiInfrastructure fakeApiInfrastructure) {
+
         // Crear servicio de cache con provider de Redis
         CacheLibraryService cache = new CacheLibraryService(cacheInfrastructure);
-        
-        return new ExampleUseCase(cache, fakeApiInfrastructure, executor);
+
+        return new ExampleUseCase(cache, fakeApiInfrastructure);
     }
 }
 ```
@@ -129,26 +119,23 @@ public class AppConfiguration {
 public class ExampleUseCase implements ExamplePort {
     private final CacheLibraryService cache;
     private final IFakeApiInfrastructure fakeApiInfrastructure;
-    private final ExecutorService executor;
-    
+
     public ExampleUseCase(
             CacheLibraryService cache,
-            IFakeApiInfrastructure fakeApiInfrastructure,
-            ExecutorService executor) {
+            IFakeApiInfrastructure fakeApiInfrastructure) {
         this.cache = cache;
         this.fakeApiInfrastructure = fakeApiInfrastructure;
-        this.executor = executor;
     }
-    
+
     @Override
-    public CompletableFuture<EasyResult<CreateExampleAdapter>> getDataAsync(
+    public EasyResult<CreateExampleAdapter> getDataAsync(
             TraceIdentifierAdapter trace,
             CreateExampleCommandAdapter command,
             CancellationToken cancellationToken) {
         
         String cacheKey = "example-" + command.customerId();
         
-        return cache
+        CompletableFuture<CreateExampleAdapter> resultTask = cache
             .forKey(cacheKey)
             .useStrategy(CacheStrategy.CACHE_THEN_SOURCE_AND_STORE)
             .withTtl(Duration.ofMinutes(10), Duration.ofMinutes(2))
@@ -156,8 +143,13 @@ public class ExampleUseCase implements ExamplePort {
                 token -> fetchFromSource(trace, command, token),
                 CreateExampleAdapter.class,
                 cancellationToken
-            )
-            .thenApply(EasyResult::success);
+            );
+
+        CreateExampleAdapter result = resultTask
+            .orTimeout(cancellationToken.remainingTimeout().toMillis(), TimeUnit.MILLISECONDS)
+            .join();
+
+        return result == null ? EasyResult.empty() : EasyResult.success(result);
     }
     
     private CompletableFuture<CreateExampleAdapter> fetchFromSource(

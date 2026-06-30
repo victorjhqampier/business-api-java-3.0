@@ -28,7 +28,8 @@ com/arify/application/
 
 ## Patrones
 
-- Casos de uso retornan `EasyResult<T>`: `EasyResult.success(valor)`, `EasyResult.failure(codigo, errores)`, `EasyResult.empty()`.
+- Casos de uso expuestos por `application/ports/` retornan `EasyResult<T>` directamente: `EasyResult.success(valor)`, `EasyResult.failure(codigo, errores)`, `EasyResult.empty()`.
+- No exponer `CompletableFuture<EasyResult<T>>` en puertos de entrada. La capa presentation corre en virtual threads y llama application de forma imperativa.
 - Adaptadores son Java records inmutables.
 - Puertos en `application/ports/` son solo puertos de entrada; metodos publicos maximo 3 parametros (si mas, usar adapter object).
 - Interfaces de salida implementadas por infraestructura viven en `domain/interfaces/`; application las consume por constructor, nunca por clases concretas.
@@ -55,21 +56,22 @@ Application debe optimizar primero el camino data-intensive: validar, orquestar,
 - El hallazgo actual del endpoint 422 indica que la validacion pura es sub-milisegundo; las requests calientes en jar local quedaron cerca de 2.35-2.70 ms.
 - **Hot Path**: Evitar streams, reflection y objetos temporales en reglas que corren por request cuando un loop simple o instancia reutilizada sea mas barato y claro.
 - Mantener casos de uso libres de HTTP, logging operativo, serialization frameworks y detalles de infraestructura. Esos costos pertenecen a presentation/infrastructure.
-- **Hilos virtuales en application**: Se expresan solo con Java nativo. Recibir `Executor`/`ExecutorService` por constructor y usar `CompletableFuture.*Async(..., executor)` para continuaciones o trabajo I/O-bound. No usar `@RunOnVirtualThread` ni anotaciones de framework en casos de uso.
+- **Application imperativa sobre virtual threads**: Los endpoints de presentation usan `@RunOnVirtualThread`; por eso los casos de uso deben ser legibles e imperativos cuando el flujo de negocio sea secuencial. No inyectar `Executor`/`ExecutorService` en un caso de uso si no se usa realmente.
+- **CompletableFuture interno solamente**: Usar `CompletableFuture` dentro de application cuando hay paralelismo real entre llamadas independientes o coordinacion de APIs async de infraestructura. Hacer `join()` dentro del caso de uso despues de `allOf(...).orTimeout(...).join()` es aceptable porque el caller es un virtual thread.
 - **IMPORTANTE**: No envolver una operacion ya no bloqueante (`CompletableFuture` retornado por infraestructura) en `supplyAsync` solo para "usar virtual threads"; eso agrega overhead. Usar el executor para continuaciones (`thenApplyAsync`, `thenComposeAsync`) o para adaptar APIs bloqueantes.
-- **Ejemplo correcto de uso de executor**:
+- **Ejemplo correcto de paralelismo interno**:
   ```java
   // Infrastructure retorna CompletableFuture (ya no bloqueante)
   CompletableFuture<Optional<FakeApiEntity>> result1Task = fakeApi.getUserAsync(id, token);
   CompletableFuture<Optional<FakeApiEntity>> result2Task = fakeApi.getTitleAsync(id, token);
   
-  // Usar executor solo para continuaciones, NO para envolver
-  return CompletableFuture.allOf(result1Task, result2Task)
+  CompletableFuture.allOf(result1Task, result2Task)
       .orTimeout(token.remainingTimeout().toMillis(), TimeUnit.MILLISECONDS)
-      .thenApplyAsync(ignored -> {
-          // Transformación de datos en virtual thread
-          return mapToResult(result1Task.join(), result2Task.join());
-      }, myThreadExec);
+      .join();
+
+  Optional<FakeApiEntity> result1 = result1Task.join();
+  Optional<FakeApiEntity> result2 = result2Task.join();
+  return mapToResult(result1, result2);
   ```
 
 ## Prohibido

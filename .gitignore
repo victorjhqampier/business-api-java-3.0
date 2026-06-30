@@ -79,9 +79,11 @@ $RECYCLE.BIN/
 .Trash-*
 
 # --- Environment & Secrets ---
+.env
 presentation/businessapi/.env
 .env.*
 !.env.example
+!**/.env.example
 *.log
 
 # TLS Certificates

@@ -20,7 +20,7 @@ com/arify/httpclientbuilder/
 **Patrón obligatorio**: `HttpClientConnector` debe ser `@ApplicationScoped` (Singleton CDI).
 
 ```java
-// Composition Root (AppConfiguration)
+// Composition Root (HttpClientBuilderSetting)
 @Produces
 @ApplicationScoped
 public HttpClientConnector httpClientConnector() {
@@ -55,42 +55,32 @@ JsonNode content = HttpClientConnector.getObjectMapper().readTree(json);
 String serialized = HttpClientConnector.getObjectMapper().writeValueAsString(data);
 ```
 
-### 3. Parsing Centralizado con Logging de Errores
+### 3. Parsing Centralizado y Resultado Seguro
 
 **OBLIGATORIO**: La deserialización JSON se centraliza en `HttpClientConnector.parseBodyToJson()`.
 
 **Características**:
 - **Parsing Único**: El body de la respuesta HTTP se parsea **una sola vez** en el Connector y se entrega como `JsonNode` en el `HttpResponseEntity`.
-- **Logging Crítico**: Si ocurre un error de deserialización (`JsonProcessingException`), se registra un log de nivel **`SEVERE`** con contexto completo (URL, preview del body) antes de relanzar la excepción.
-- **Propagación Natural**: La excepción se envuelve en `RuntimeException` para que fluya hacia la capa de presentación sin interrupciones.
+- **Body no JSON**: Si el body no es JSON valido, se preserva como `TextNode` y se mantiene el `statusCode` real.
+- **Boundary seguro**: Errores esperados de comunicacion o parsing se convierten en `HttpResponseEntity`; no se usan excepciones para flujos esperados.
 
 ```java
-// HttpClientConnector.parseBodyToJson
 public JsonNode parseBodyToJson(String body, String url) {
     if (body == null || body.isEmpty()) {
         return NullNode.getInstance();
     }
-    
+
     try {
         return OBJECT_MAPPER.readTree(body);
     } catch (JsonProcessingException exception) {
-        // LOG CRÍTICO con contexto
-        LOGGER.log(Level.SEVERE, InfrastructureLogger.format(
-            "SEVERE",
-            "JSON deserialization failed",
-            null,
-            "{\"url\":\"" + url + "\",\"body_preview\":\"" + bodyPreview + "\"}",
-            "\"" + exception.getMessage() + "\""));
-        
-        throw new RuntimeException("Failed to parse JSON response from: " + url, exception);
+        return TextNode.valueOf(body);
     }
 }
 ```
 
 **Beneficio**: 
-- **Observabilidad**: Los errores de parsing se registran con contexto completo para diagnóstico en producción.
 - **DRY**: El código de deserialización se escribe **una sola vez** en el Connector.
-- **Zero Boilerplate**: Los comandos de infraestructura ya no necesitan manejar `JsonProcessingException`.
+- **Resiliencia**: El adapter que consume la respuesta decide si `statusCode != 200` debe mapearse a `Optional.empty()` o equivalente.
 
 ### 4. Logger Estático
 
@@ -101,6 +91,18 @@ private static final Logger LOGGER = Logger.getLogger(HttpClientConnector.class.
 ```
 
 Evita lookup de logger por cada request.
+
+### 4.1 Logger del Caller y Logs Solo en Errores HTTP
+
+**OBLIGATORIO**: `HttpClientBuilder` debe recibir el `Logger` de la clase caller.
+
+```java
+private static final Logger LOGGER = Logger.getLogger(FakeApiCommand.class.getName());
+
+HttpClientBuilder builder = new HttpClientBuilder(connector, LOGGER);
+```
+
+El log estructurado de llamadas externas se emite solo cuando `response.statusCode() != 200`. No agregar logs informativos por request en la libreria compartida.
 
 ### 5. HTTP/2 con Fallback Automático
 
@@ -242,7 +244,9 @@ token.onCancel(() -> future.cancel(true));
 - Forzar HTTP/1.1 sin justificación técnica (HTTP/2 es superior para data-intensive).
 - Usar `Streams` para construcción de URLs o query params en hot path.
 - Logger no estático.
-- **Usar `try-catch` para control de flujo o manejo de errores esperados**: Las excepciones (`JsonProcessingException`, `IOException`, `TimeoutException`, errores de parsing) deben propagarse hacia `presentation`. Solo se permite `catch + throw` para enriquecer contexto antes de re-lanzar.
+- Loguear todas las respuestas exitosas desde la libreria compartida; solo `statusCode != 200` debe producir log estructurado.
+- Cachear payloads de error como entidades validas. El adapter debe convertir `statusCode != 200` a `Optional.empty()` o equivalente.
+- **Usar `try-catch` para control de flujo en application**. En HTTP infrastructure, capturar errores de comunicacion para devolver una respuesta segura es permitido porque el builder es el boundary con el sistema externo.
 
 ## Verificación de Rendimiento
 

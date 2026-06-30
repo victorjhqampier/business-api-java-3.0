@@ -20,230 +20,209 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 
-/**
- * Implementación de ExampleIdempotencyPort usando CacheLibraryService.
- * Sigue la lógica de referencia C# ExampleIdempotencyCase.cs y el patrón de ExampleUseCase.java.
- */
 public class ExampleIdempotencyUsecase implements ExampleIdempotencyPort {
     private static final int VALIDATION_FAILED_STATUS = 422;
     private static final int CONFLICT_STATUS = 409;
-    
+    private static final String MICROSERVICE_ID = "1234";
     private static final Duration RESERVE_TTL = Duration.ofMinutes(1);
     private static final Duration RESERVE_JITTER = Duration.ofSeconds(10);
-    private static final Duration CACHE_TTL = Duration.ofMinutes(10);
-    private static final Duration CACHE_JITTER = Duration.ofMinutes(2);
-    private static final Duration PREVIEW_TTL = Duration.ofMinutes(4);
-    private static final Duration PREVIEW_JITTER = Duration.ofMinutes(1);
     private static final Duration IDEMPOTENCY_TTL = Duration.ofMinutes(15);
     private static final Duration IDEMPOTENCY_JITTER = Duration.ofSeconds(30);
 
     private static final TraceIdentifierAdapterValidator TRACE_IDENTIFIER_VALIDATOR = new TraceIdentifierAdapterValidator();
     private static final ExamplePreRequestAdapterValidator PRE_REQUEST_VALIDATOR = new ExamplePreRequestAdapterValidator();
 
-    private final IFakeApiInfrastructure fakeApi;
-    private final CacheLibraryService cacheLibrary;
-    private final ExecutorService executor;
+    private final IFakeApiInfrastructure _fakeApi;
+    private final CacheLibraryService _cacheLibrary;
 
-    public ExampleIdempotencyUsecase(
-            IFakeApiInfrastructure fakeApi,
-            CacheLibraryService cacheLibrary,
-            ExecutorService executor) {
-        this.fakeApi = fakeApi;
-        this.cacheLibrary = cacheLibrary;
-        this.executor = executor;
+    public ExampleIdempotencyUsecase(IFakeApiInfrastructure fakeApi, CacheLibraryService cacheLibrary) {
+        this._fakeApi = fakeApi;
+        this._cacheLibrary = cacheLibrary;
     }
 
     @Override
-    public CompletableFuture<EasyResult<RetrieveExampleAdapter>> getDataAsync(TraceIdentifierAdapter header, CancellationToken token) {
-        // 1. Validación de headers
-        List<ValidationResultAdapter> errors = FluentValidationExecutor.execute(header, TRACE_IDENTIFIER_VALIDATOR);
+    public EasyResult<RetrieveExampleAdapter> getDataAsync(TraceIdentifierAdapter header, CancellationToken ctx) {
+        var errors = FluentValidationExecutor.execute(header, TRACE_IDENTIFIER_VALIDATOR);
         if (!errors.isEmpty()) {
-            return CompletableFuture.completedFuture(EasyResult.failure(VALIDATION_FAILED_STATUS, errors));
+            return EasyResult.failure(VALIDATION_FAILED_STATUS, errors);
         }
 
-        String cacheKey = "get-" + header.messageIdentifier();
+        String cacheKey = "get-" + MICROSERVICE_ID + header.messageIdentifier();
         String owner = UUID.randomUUID().toString();
 
-        // 2. Reserva atómica
-        return cacheLibrary.forKey(cacheKey)
+        boolean reserved = _cacheLibrary.forKey(cacheKey)
                 .withOwner(owner)
                 .withTtl(RESERVE_TTL, RESERVE_JITTER)
                 .ensureProviderAvailable(true)
-                .tryReserveAsync(token)
-                .thenCompose(reserved -> {
-                    if (!reserved) {
-                        return CompletableFuture.completedFuture(EasyResult.failure(
-                                VALIDATION_FAILED_STATUS,
-                                List.of(new ValidationResultAdapter(
-                                        "12345",
-                                        "Message Identifier already exists for GET idempotency",
-                                        "MessageIdentifier"))));
-                    }
+                .tryReserveAsync(ctx)
+                .join();
 
-                    // 3. Inicio de lógica de negocio (en paralelo con cache-through)
-                    int apiValue = ThreadLocalRandom.current().nextInt(1, 4);
-                    int productValue = ThreadLocalRandom.current().nextInt(1, 4);
+        if (!reserved) {
+            return EasyResult.failure(
+                    CONFLICT_STATUS,
+                    List.of(new ValidationResultAdapter(
+                            "12345",
+                            "Message Identifier already exists for GET idempotency",
+                            "MessageIdentifier")));
+        }
 
-                    CompletableFuture<FakeApiEntity> apiResultTask = cacheLibrary
-                            .forKey("trx-" + header.channelIdentifier() + "-fake-api-title-" + apiValue)
-                            .useStrategy(CacheStrategy.CACHE_THEN_SOURCE_AND_STORE)
-                            .withTtl(CACHE_TTL, CACHE_JITTER)
-                            .resolveAsync(
-                                    cacheToken -> fakeApi.getUserAsync(apiValue, cacheToken)
-                                            .thenApply(opt -> opt.orElse(null)),
-                                    FakeApiEntity.class,
-                                    token);
+        int apiValue = ThreadLocalRandom.current().nextInt(1, 4);
+        int productValue = ThreadLocalRandom.current().nextInt(1, 4);
 
-                    CompletableFuture<FakeApiEntity> productResultTask = cacheLibrary
-                            .forKey("trx-" + header.channelIdentifier() + "-fake-api-product-" + productValue)
-                            .useStrategy(CacheStrategy.CACHE_THEN_SOURCE_AND_STORE)
-                            .withTtl(CACHE_TTL, CACHE_JITTER)
-                            .resolveAsync(
-                                    cacheToken -> fakeApi.getTitleAsync(productValue, cacheToken)
-                                            .thenApply(opt -> opt.orElse(null)),
-                                    FakeApiEntity.class,
-                                    token);
+        CompletableFuture<FakeApiEntity> apiResultTask = _cacheLibrary
+                .forKey("trx-title-" + apiValue)
+                .useStrategy(CacheStrategy.CACHE_THEN_SOURCE_AND_STORE)
+                .withTtl(Duration.ofMinutes(15), Duration.ofMinutes(2))
+                .resolveAsync(
+                        cacheToken -> _fakeApi.getUserAsync(apiValue, cacheToken).thenApply(opt -> opt.orElse(null)),
+                        FakeApiEntity.class,
+                        ctx);
 
-                    return CompletableFuture.allOf(apiResultTask, productResultTask)
-                            .orTimeout(token.remainingTimeout().toMillis(), TimeUnit.MILLISECONDS)
-                            .thenComposeAsync(ignored -> {
-                                FakeApiEntity apiResult = apiResultTask.join();
-                                FakeApiEntity productResult = productResultTask.join();
+        CompletableFuture<FakeApiEntity> productResultTask = _cacheLibrary
+                .forKey("trx-product-" + productValue)
+                .useStrategy(CacheStrategy.CACHE_THEN_SOURCE_AND_STORE)
+                .withTtl(Duration.ofMinutes(15), Duration.ofMinutes(2))
+                .resolveAsync(
+                        cacheToken -> _fakeApi.getTitleAsync(productValue, cacheToken).thenApply(opt -> opt.orElse(null)),
+                        FakeApiEntity.class,
+                        ctx);
 
-                                if (apiResult == null || productResult == null) {
-                                    return CompletableFuture.completedFuture(EasyResult.empty());
-                                }
+        CompletableFuture.allOf(apiResultTask, productResultTask)
+                .orTimeout(ctx.remainingTimeout().toMillis(), TimeUnit.MILLISECONDS)
+                .join();
 
-                                // 4. Fin de lógica de negocio y preparación de respuesta
-                                RetrieveExampleAdapter result = new RetrieveExampleAdapter(
-                                        productResult.title(),
-                                        apiResult.title());
+        FakeApiEntity apiResult = apiResultTask.join();
+        FakeApiEntity productResult = productResultTask.join();
 
-                                ExamplePostValidIdemAdapter preview = new ExamplePostValidIdemAdapter(
-                                        header.channelIdentifier(),
-                                        header.deviceIdentifier(),
-                                        result);
+        if (apiResult == null || productResult == null) {
+            _cacheLibrary.forKey(cacheKey).ensureProviderAvailable(true).removeAsync(ctx).join();
+            return EasyResult.empty();
+        }
 
-                                // 5. Completar reserva atómicamente
-                                return cacheLibrary.forKey(cacheKey)
-                                        .withOwner(owner)
-                                        .withTtl(PREVIEW_TTL, PREVIEW_JITTER)
-                                        .ensureProviderAvailable(true)
-                                        .tryCompleteAsync(preview, token)
-                                        .thenApply(ignoredComplete -> EasyResult.success(result));
-                            }, executor);
-                });
+        var result = new RetrieveExampleAdapter(productResult.title(), apiResult.title());
+        var preview = new ExamplePostValidIdemAdapter(
+                header.channelIdentifier(),
+                header.deviceIdentifier(),
+                result);
+
+        boolean completed = _cacheLibrary.forKey(cacheKey)
+                .withOwner(owner)
+                .withTtl(IDEMPOTENCY_TTL, IDEMPOTENCY_JITTER)
+                .ensureProviderAvailable(true)
+                .tryCompleteAsync(preview, ctx)
+                .join();
+
+        if (!completed) {
+            _cacheLibrary.forKey(cacheKey).ensureProviderAvailable(true).removeAsync(ctx).join();
+            return EasyResult.failure(
+                    CONFLICT_STATUS,
+                    List.of(new ValidationResultAdapter(
+                            "12348",
+                            "Unable to complete idempotency preview",
+                            "MessageIdentifier")));
+        }
+
+        return EasyResult.success(result);
     }
 
     @Override
-    public CompletableFuture<EasyResult<RetrieveExampleAdapter>> setIdempotencyAsync(
-            TraceIdentifierAdapter header,
-            ExamplePreRequestAdapter body,
-            CancellationToken token) {
-        
-        // 1. Validación de headers y body
-        List<ValidationResultAdapter> errors = FluentValidationExecutor.execute(header, TRACE_IDENTIFIER_VALIDATOR);
+    public EasyResult<RetrieveExampleAdapter> setIdempotencyAsync(TraceIdentifierAdapter header, ExamplePreRequestAdapter body, CancellationToken ctx) {
+        var errors = FluentValidationExecutor.execute(header, TRACE_IDENTIFIER_VALIDATOR);
         if (!errors.isEmpty()) {
-            return CompletableFuture.completedFuture(EasyResult.failure(VALIDATION_FAILED_STATUS, errors));
+            return EasyResult.failure(VALIDATION_FAILED_STATUS, errors);
         }
 
         errors = FluentValidationExecutor.execute(body, PRE_REQUEST_VALIDATOR);
         if (!errors.isEmpty()) {
-            return CompletableFuture.completedFuture(EasyResult.failure(VALIDATION_FAILED_STATUS, errors));
+            return EasyResult.failure(VALIDATION_FAILED_STATUS, errors);
         }
 
-        String cacheKey = "post-" + header.messageIdentifier();
+        if (ctx.isCancellationRequested()) {
+            throw new CancellationException("Operation cancelled");
+        }
+
         String previewCacheKey = "get-" + body.previewMessageIdentification();
+        String cacheKey = "post-" + header.messageIdentifier();
         String owner = UUID.randomUUID().toString();
 
-        // 2. Verificar si ya existe el resultado (idempotencia)
-        return cacheLibrary.forKey(cacheKey)
+        RetrieveExampleAdapter cachedData = _cacheLibrary.forKey(cacheKey)
                 .ensureProviderAvailable(true)
-                .getCreatedAsync(RetrieveExampleAdapter.class, true, token)
-                .thenCompose(cachedData -> {
-                    if (cachedData != null) {
-                        return CompletableFuture.completedFuture(EasyResult.success(cachedData));
-                    }
+                .getCreatedAsync(RetrieveExampleAdapter.class, true, ctx)
+                .join();
 
-                    // 3. Reservar llave de idempotencia
-                    return cacheLibrary.forKey(cacheKey)
-                            .withOwner(owner)
-                            .withTtl(RESERVE_TTL, RESERVE_JITTER)
-                            .ensureProviderAvailable(true)
-                            .tryReserveAsync(token)
-                            .thenCompose(reserved -> {
-                                if (!reserved) {
-                                    // Fallback concurrente: alguien más está procesando o ya terminó
-                                    return cacheLibrary.forKey(cacheKey)
-                                            .ensureProviderAvailable(true)
-                                            .getCreatedAsync(RetrieveExampleAdapter.class, true, token)
-                                            .thenApply(concurrentResult -> {
-                                                if (concurrentResult != null) {
-                                                    return EasyResult.success(concurrentResult);
-                                                }
-                                                return EasyResult.failure(
-                                                        CONFLICT_STATUS,
-                                                        List.of(new ValidationResultAdapter(
-                                                                "12347",
-                                                                "Idempotency request is already in progress",
-                                                                "MessageIdentifier")));
-                                            });
-                                }
+        if (cachedData != null) {
+            return EasyResult.success(cachedData);
+        }
 
-                                // 4. Validar preview previo de GetDataAsync
-                                return cacheLibrary.forKey(previewCacheKey)
-                                        .useStrategy(CacheStrategy.CACHE_ONLY_THEN_CLOSE)
-                                        .ensureProviderAvailable(true)
-                                        .resolveAsync(ExamplePostValidIdemAdapter.class, token)
-                                        .thenCompose(previewData -> {
-                                            if (previewData == null
-                                                    || !Objects.equals(previewData.channelId(), header.channelIdentifier())
-                                                    || !Objects.equals(previewData.deviceId(), header.deviceIdentifier())) {
-                                                
-                                                // Invalidación por desajuste de datos
-                                                return cacheLibrary.forKey(cacheKey)
-                                                        .ensureProviderAvailable(true)
-                                                        .removeAsync(token)
-                                                        .thenApply(ignored -> EasyResult.failure(
-                                                                VALIDATION_FAILED_STATUS,
-                                                                List.of(new ValidationResultAdapter(
-                                                                        "12346",
-                                                                        "Invalid preview message identifier or trace data does not match with preview data",
-                                                                        "MessageIdentifier"))));
-                                            }
+        boolean reserved = _cacheLibrary.forKey(cacheKey)
+                .withOwner(owner)
+                .withTtl(RESERVE_TTL, RESERVE_JITTER)
+                .ensureProviderAvailable(true)
+                .tryReserveAsync(ctx)
+                .join();
 
-                                            // 5. Generar resultado final basado en el preview
-                                            RetrieveExampleAdapter response = previewData.response();
-                                            RetrieveExampleAdapter result = new RetrieveExampleAdapter(
-                                                    response == null || response.ping() == null ? "" : response.ping(),
-                                                    Instant.now().toString());
+        if (!reserved) {
+            RetrieveExampleAdapter concurrentResult = _cacheLibrary.forKey(cacheKey)
+                    .ensureProviderAvailable(true)
+                    .getCreatedAsync(RetrieveExampleAdapter.class, true, ctx)
+                    .join();
 
-                                            // 6. Completar idempotencia
-                                            return cacheLibrary.forKey(cacheKey)
-                                                    .withOwner(owner)
-                                                    .withTtl(IDEMPOTENCY_TTL, IDEMPOTENCY_JITTER)
-                                                    .tryCompleteAsync(result, token)
-                                                    .thenCompose(completed -> {
-                                                        if (!completed) {
-                                                            return cacheLibrary.forKey(cacheKey)
-                                                                    .ensureProviderAvailable(true)
-                                                                    .removeAsync(token)
-                                                                    .thenApply(ignored -> EasyResult.failure(
-                                                                            CONFLICT_STATUS,
-                                                                            List.of(new ValidationResultAdapter(
-                                                                                    "12348",
-                                                                                    "Unable to complete idempotency process",
-                                                                                    "MessageIdentifier"))));
-                                                        }
-                                                        return CompletableFuture.completedFuture(EasyResult.success(result));
-                                                    });
-                                        });
-                            });
-                });
+            if (concurrentResult != null) {
+                return EasyResult.success(concurrentResult);
+            }
+
+            return EasyResult.failure(
+                    CONFLICT_STATUS,
+                    List.of(new ValidationResultAdapter(
+                            "12347",
+                            "Idempotency request is already in progress",
+                            "MessageIdentifier")));
+        }
+
+        ExamplePostValidIdemAdapter previewData = _cacheLibrary.forKey(previewCacheKey)
+                .useStrategy(CacheStrategy.CACHE_ONLY_THEN_CLOSE)
+                .ensureProviderAvailable(true)
+                .resolveAsync(ExamplePostValidIdemAdapter.class, ctx)
+                .join();
+
+        if (previewData == null
+                || !Objects.equals(previewData.channelId(), header.channelIdentifier())
+                || !Objects.equals(previewData.deviceId(), header.deviceIdentifier())) {
+            _cacheLibrary.forKey(cacheKey).ensureProviderAvailable(true).removeAsync(ctx).join();
+            return EasyResult.failure(
+                    VALIDATION_FAILED_STATUS,
+                    List.of(new ValidationResultAdapter(
+                            "12346",
+                            "Invalid preview message identifier or trace data does not match with preview data",
+                            "MessageIdentifier")));
+        }
+
+        RetrieveExampleAdapter response = previewData.response();
+        RetrieveExampleAdapter result = new RetrieveExampleAdapter(
+                response == null || response.ping() == null ? "" : response.ping(),
+                Instant.now().toString());
+
+        boolean completed = _cacheLibrary.forKey(cacheKey)
+                .withOwner(owner)
+                .withTtl(IDEMPOTENCY_TTL, IDEMPOTENCY_JITTER)
+                .tryCompleteAsync(result, ctx)
+                .join();
+
+        if (!completed) {
+            _cacheLibrary.forKey(cacheKey).ensureProviderAvailable(true).removeAsync(ctx).join();
+            return EasyResult.failure(
+                    CONFLICT_STATUS,
+                    List.of(new ValidationResultAdapter(
+                            "12348",
+                            "Unable to complete idempotency process",
+                            "MessageIdentifier")));
+        }
+
+        return EasyResult.success(result);
     }
 }
